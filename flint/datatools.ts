@@ -422,6 +422,12 @@ export class FlintDataTransfer {
 
 	// ── Emergency helpers ─────────────────────────────────────────────────────
 
+	async deleteVault(vaultName: string): Promise<void> {
+		if (!vaultRef) return;
+		const list = await listAll(ref(vaultRef, vaultName));
+		await this.deleteList(list);
+	}
+
 	async clearRemoteVault(settings: FlintPluginSettings): Promise<void> {
 		if (!settings.remoteConnectedVault || !vaultRef) return;
 		const list = await listAll(this.sRef(settings.remoteConnectedVault));

@@ -1,31 +1,37 @@
 # Flint
-Unofficial Obsidian - Firebase vault sync plugin. Store your obsidian files on your own custom Firebase storage bucket for complete control over your cloud files! This plugin was made for those who want to solely manage their own data across their obsidian devices.
+
+Obsidian plugin that syncs your vault across devices using your own Firebase Storage bucket. Concurrent edits from multiple devices are merged automatically using [Automerge](https://automerge.org/) CRDTs — no conflicts, no lost work.
 
 ## Features
-- Upload/Download data to your Firebase storage bucket with the upload and download ribbon icons.
-- Support for access to multiple remote vaults on one device.
-- Firebase Authentication — sign in with email/password to secure your data.
-- Storage rules enforced: only authenticated users can read and write.
-- Android/Mobile compatibility.
+
+- **CRDT sync** — concurrent edits from different devices are merged, not overwritten.
+- **Bring-your-own Firebase** — your data lives in your bucket; no third-party server involved.
+- **Firebase Authentication** — sign in with email/password to scope reads/writes to your account.
+- **Force Push** — command-palette escape hatch to overwrite remote state with local vault.
+- **Android/Mobile compatible.**
 
 ## Setup
 
-**Install Procedure:**
-1. Allow community plugins within the Obsidian app.
-2. Create a folder titled `plugins` under `YOURVAULTNAME/.obsidian/`.
-3. Paste the extracted Flint plugin folder inside `YOURVAULTNAME/.obsidian/plugins/`.
-4. Enable the plugin under the Community Plugins tab in Obsidian.
+### Firebase Project
 
-**Firebase Project Setup:**
-1. Create a new Firebase project at [console.firebase.google.com](https://console.firebase.google.com).
-2. Register a **Web App** in your project (Project Settings → Your apps → Add app).
-3. Enable **Firebase Storage** (Storage → Get Started). Choose a region and start in production mode.
-4. Enable **Email/Password** authentication (Authentication → Sign-in method → Email/Password → Enable).
-5. Set your Storage rules to require authentication:
+1. Create a new project at [console.firebase.google.com](https://console.firebase.google.com).
+2. Register a **Web App** (Project Settings → Your apps → Add app) and copy the `firebaseConfig` values.
+3. Enable **Firebase Storage** (Build → Storage → Get started). Choose a region, start in production mode.
+4. Enable **Email/Password** authentication (Build → Authentication → Sign-in method → Email/Password → Enable).
+5. Create a user account (Authentication → Users → Add user).
+6. Set your Storage rules:
    ```
-   allow read, write: if request.auth != null;
+   rules_version = '2';
+   service firebase.storage {
+     match /b/{bucket}/o {
+       match /vaults/{vaultName}/{allPaths=**} {
+         allow read, write: if request.auth != null
+                            && request.auth.token.email != null;
+       }
+     }
+   }
    ```
-6. Configure CORS on your bucket to allow requests from Obsidian (`app://obsidian.md`). Create a `cors.json` file:
+7. Configure CORS on your bucket. Create a `cors.json` file:
    ```json
    [
      {
@@ -36,36 +42,39 @@ Unofficial Obsidian - Firebase vault sync plugin. Store your obsidian files on y
      }
    ]
    ```
-   Then apply it with: `gsutil cors set cors.json gs://YOUR-BUCKET-NAME`
-7. Create an empty folder named `vaults` in your storage bucket root. Any sub-folders inside `vaults` will be accessible remote vaults.
+   Apply it with: `gsutil cors set cors.json gs://YOUR-BUCKET-NAME`
 
-**Plugin Configuration (in Obsidian):**
+### Plugin Installation
+
+1. Enable Community Plugins in Obsidian settings.
+2. Search for **Flint** and install, or manually copy the plugin folder into `VAULT/.obsidian/plugins/`.
+3. Enable the plugin under Community Plugins.
+
+### Plugin Configuration
 
 1. Open **Settings → Flint**.
-2. Enter your Firebase project credentials (found in Project Settings → SDK setup → Config) and click **Save Configuration**.
-3. Enter your email and password and click **Sign in** (or **Create account** for first-time setup).
-4. Select your remote vault from the dropdown.
+2. Paste your Firebase `firebaseConfig` values and click **Save**.
+3. Enter your email/password and sign in.
 
-## App Info
-- The plugin must be installed independently on each device.
-- Local vault names can be anything — vault data is tied to the Firebase vault names.
-- Use the **Upload** and **Download** icons on the left ribbon (PC) to push and pull changes. On mobile, access them from the bottom-right pull-up menu.
-- Upload and download are force operations (equivalent to force push/pull) — they replace the remote or local vault entirely.
+## Usage
 
-![Screenshot 2023-08-26 212644](https://github.com/Andrewyx/Flint/assets/72371419/cf252aea-57c0-4cd3-868f-bbaf933246c8)
+**Sync** — click the refresh icon in the left ribbon. Flint merges your local files with remote state and uploads the result. The first sync uploads everything; subsequent syncs are incremental.
 
-You must connect to a remote vault before using the plugin. This can be done in the Flint settings menu or by binding a hotkey to "Import Flint Vault from Cloud".
+**Force Push** — open the Command Palette (`Cmd/Ctrl + P`) and run **Flint: Force push vault to Firebase** to overwrite remote state with your local vault, skipping the merge step.
 
-![Screenshot 2023-08-26 132612](https://github.com/Andrewyx/Flint/assets/72371419/79374c28-bedb-48d2-8d57-fadc3ab82bd3)
+**New device** — configure Flint with the same Firebase credentials and click Sync. Your notes will be downloaded and merged into the local vault.
+
+## Storage Layout
+
+```
+vaults/
+  <vault-name>/
+    path/to/note.md        ← Markdown with _flint_id frontmatter
+    path/to/note.md.am     ← Automerge binary (CRDT state)
+```
 
 ## Troubleshooting
-- **"NO REMOTE VAULT" notice**: The `vaults` directory in your Firebase storage bucket is missing or empty. Make sure the structure is `root → vaults → YOURREMOTEVAULTNAME`.
-- **CORS errors in console**: Apply the CORS config to your bucket (see step 6 in setup above).
-- **Sign-in fails with `auth/configuration-not-found`**: Email/Password auth provider is not enabled in the Firebase Console (Authentication → Sign-in method).
-- **No plugins folder**: Create a `plugins` folder under `.obsidian/` in your vault and make sure Community Plugins are enabled in Obsidian settings.
 
-## Roadmap
-- Autogenerated buckets: Streamline setup so users don't need to manually configure Firebase directories.
-- Changelogs: Replace force push/pull with merge-based sync using the Google diff-match-patch API.
-- Autosync: Automatic vault saving with timeline revert capability.
-- Code cleanup: Remove remaining unused/sample code from the initial plugin scaffold.
+- **CORS errors** — apply the CORS config to your bucket (step 7 above).
+- **`auth/configuration-not-found`** — Email/Password sign-in is not enabled in Firebase Console.
+- **No changes after sync** — check that your Storage rules allow authenticated writes and that the bucket name in settings matches exactly.

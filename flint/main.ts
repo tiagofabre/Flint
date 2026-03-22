@@ -19,6 +19,21 @@ export default class FlintPlugin extends Plugin {
 		this.dataTools.syncAll(this.app.vault, this.settings);
 	}, 5000, true);
 
+	private scheduledSyncHandle: number | null = null;
+
+	setupScheduledSync() {
+		if (this.scheduledSyncHandle !== null) {
+			window.clearInterval(this.scheduledSyncHandle);
+			this.scheduledSyncHandle = null;
+		}
+		if (this.settings.scheduledSyncEnabled && this.settings.userEmail) {
+			const ms = this.settings.scheduledSyncIntervalMinutes * 60 * 1000;
+			this.scheduledSyncHandle = window.setInterval(() => {
+				this.dataTools.syncAll(this.app.vault, this.settings);
+			}, ms);
+		}
+	}
+
 	async onload() {
 		await initAutomerge();
 		await this.loadSettings();
@@ -46,8 +61,10 @@ export default class FlintPlugin extends Plugin {
 					this.settings.userEmail = user.email ?? '';
 					setUserVaultRef(user.uid);
 					this.debouncedSync(); // sync on startup / sign-in
+					this.setupScheduledSync();
 				} else {
 					this.settings.userEmail = '';
+					this.setupScheduledSync(); // clears the interval on sign-out
 				}
 				await this.saveSettings();
 			});

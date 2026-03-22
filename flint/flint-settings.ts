@@ -22,6 +22,10 @@ export interface FlintPluginSettings {
 	firebaseMessagingSenderId: string;
 	firebaseAppId: string;
 	deviceId: string;
+	syncOnStartup: boolean;
+	syncOnFileChange: boolean;
+	scheduledSyncEnabled: boolean;
+	scheduledSyncIntervalMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: FlintPluginSettings = {
@@ -34,42 +38,95 @@ export const DEFAULT_SETTINGS: FlintPluginSettings = {
 	firebaseMessagingSenderId: '',
 	firebaseAppId: '',
 	deviceId: '',
+	syncOnStartup: true,
+	syncOnFileChange: true,
+	scheduledSyncEnabled: false,
+	scheduledSyncIntervalMinutes: 5,
 }
+
+type TabId = 'general' | 'vaults' | 'sync';
+
+// ── Shared helpers ─────────────────────────────────────────────────────────
+
+async function fetchVaultNames(): Promise<string[]> {
+	if (!vaultRef) return [];
+	const vaultList: ListResult = await listAll(vaultRef);
+	return vaultList.prefixes
+		.map(r => `${r}`.split('/').pop())
+		.filter((n): n is string => !!n);
+}
+
+function buildFirebaseConfig(s: FlintPluginSettings): FirebaseConfig {
+	return {
+		apiKey: s.firebaseApiKey,
+		authDomain: s.firebaseAuthDomain,
+		storageBucket: s.firebaseStorageBucket,
+		projectId: s.firebaseProjectId,
+		messagingSenderId: s.firebaseMessagingSenderId,
+		appId: s.firebaseAppId,
+	};
+}
+
+function isFirebaseConfigured(s: FlintPluginSettings): boolean {
+	return !!(s.firebaseApiKey && s.firebaseAuthDomain && s.firebaseStorageBucket && s.firebaseProjectId);
+}
+
+// ── Settings tab ───────────────────────────────────────────────────────────
 
 export class FlintSettingsTab extends PluginSettingTab {
 	plugin: FlintPlugin;
+	private activeTab: TabId = 'general';
 
 	constructor(app: App, plugin: FlintPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
 
-	async #fetchVaultOptions() {
-		if (!vaultRef) return {};
-		const vaultList: ListResult = await listAll(vaultRef);
-
-		let ALL_FIREBASE_VAULTS: Record<string, string> = {};
-
-		for (let i = 0; i < vaultList.prefixes.length; i++) {
-			const vaultName = `${vaultList.prefixes[i]}`.split('/').pop();
-			if (vaultName) {
-				ALL_FIREBASE_VAULTS[vaultName] = vaultName;
-			}
-		}
-		return ALL_FIREBASE_VAULTS;
-	}
-
-	#isConfigured() {
-		const s = this.plugin.settings;
-		return s.firebaseApiKey && s.firebaseAuthDomain && s.firebaseStorageBucket && s.firebaseProjectId;
-	}
-
+	// Fetch all async data upfront, then clear+render synchronously to avoid
+	// race conditions when display() is called multiple times in quick succession.
 	async display(): Promise<void> {
+		const isConfigured = isFirebaseConfigured(this.plugin.settings);
+		const isSignedIn = !!this.plugin.settings.userEmail;
+		const vaultNames = (isConfigured && isSignedIn) ? await fetchVaultNames() : [];
+
 		const { containerEl } = this;
 		containerEl.empty();
 
-		// ── Step 1: Firebase Configuration ──────────────────────────────────
-		if (!this.#isConfigured()) {
+		this.renderTabBar(containerEl);
+
+		if (this.activeTab === 'general') this.renderGeneral(containerEl, isConfigured, isSignedIn, vaultNames);
+		if (this.activeTab === 'vaults') this.renderVaults(containerEl, isSignedIn, vaultNames);
+		if (this.activeTab === 'sync')    this.renderSync(containerEl, isSignedIn);
+	}
+
+	// ── Tab bar ──────────────────────────────────────────────────────────────
+
+	private renderTabBar(containerEl: HTMLElement) {
+		const tabs: { id: TabId; label: string }[] = [
+			{ id: 'general', label: 'General' },
+			{ id: 'vaults',  label: 'Vaults'  },
+			{ id: 'sync',    label: 'Sync'     },
+		];
+
+		const bar = containerEl.createDiv({ cls: 'flint-tab-bar' });
+		bar.style.cssText = 'display:flex; gap:4px; margin-bottom:16px; border-bottom:1px solid var(--background-modifier-border); padding-bottom:8px;';
+
+		for (const tab of tabs) {
+			const btn = bar.createEl('button', { text: tab.label });
+			btn.style.cssText = 'padding:4px 12px; border-radius:4px; border:none; cursor:pointer; background:none; color:var(--text-muted);';
+			if (tab.id === this.activeTab) {
+				btn.style.background = 'var(--interactive-accent)';
+				btn.style.color = 'var(--text-on-accent)';
+			}
+			btn.onclick = () => { this.activeTab = tab.id; this.display(); };
+		}
+	}
+
+	// ── General tab ──────────────────────────────────────────────────────────
+
+	private renderGeneral(containerEl: HTMLElement, isConfigured: boolean, isSignedIn: boolean, vaultNames: string[]) {
+		// Step 1: Firebase config
+		if (!isConfigured) {
 			containerEl.createEl('h3', { text: 'Firebase Configuration' });
 			containerEl.createEl('p', {
 				text: 'Enter your Firebase project credentials. Find these in Firebase Console → Project Settings → Your apps → SDK setup.',
@@ -78,12 +135,12 @@ export class FlintSettingsTab extends PluginSettingTab {
 
 			const cfg = this.plugin.settings;
 			const fields: { label: string; key: keyof FlintPluginSettings; placeholder: string }[] = [
-				{ label: 'API Key',             key: 'firebaseApiKey',           placeholder: 'AIzaSy...' },
-				{ label: 'Auth Domain',         key: 'firebaseAuthDomain',       placeholder: 'your-project.firebaseapp.com' },
-				{ label: 'Storage Bucket',      key: 'firebaseStorageBucket',    placeholder: 'your-project.appspot.com' },
-				{ label: 'Project ID',          key: 'firebaseProjectId',        placeholder: 'your-project' },
+				{ label: 'API Key',             key: 'firebaseApiKey',            placeholder: 'AIzaSy...' },
+				{ label: 'Auth Domain',         key: 'firebaseAuthDomain',        placeholder: 'your-project.firebaseapp.com' },
+				{ label: 'Storage Bucket',      key: 'firebaseStorageBucket',     placeholder: 'your-project.appspot.com' },
+				{ label: 'Project ID',          key: 'firebaseProjectId',         placeholder: 'your-project' },
 				{ label: 'Messaging Sender ID', key: 'firebaseMessagingSenderId', placeholder: '123456789' },
-				{ label: 'App ID',              key: 'firebaseAppId',            placeholder: '1:123...' },
+				{ label: 'App ID',              key: 'firebaseAppId',             placeholder: '1:123...' },
 			];
 
 			for (const field of fields) {
@@ -101,16 +158,16 @@ export class FlintSettingsTab extends PluginSettingTab {
 					.setCta()
 					.onClick(async () => {
 						await this.plugin.saveSettings();
-						if (this.#isConfigured()) {
-							setupFirebase(this.#buildConfig());
+						if (isFirebaseConfigured(this.plugin.settings)) {
+							setupFirebase(buildFirebaseConfig(this.plugin.settings));
 						}
 						this.display();
 					}));
 			return;
 		}
 
-		// ── Step 2: Firebase Account ─────────────────────────────────────────
-		if (!this.plugin.settings.userEmail) {
+		// Step 2: Sign in
+		if (!isSignedIn) {
 			new Setting(containerEl)
 				.setName('Firebase Configuration')
 				.setDesc(`Project: ${this.plugin.settings.firebaseProjectId}`)
@@ -126,6 +183,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 
 			let emailInput = '';
 			let passwordInput = '';
+
 			new Setting(containerEl)
 				.setName('Email')
 				.addText(text => text
@@ -135,8 +193,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 			new Setting(containerEl)
 				.setName('Password')
 				.addText(text => {
-					text.setPlaceholder('••••••••')
-						.onChange(val => { passwordInput = val; });
+					text.setPlaceholder('••••••••').onChange(val => { passwordInput = val; });
 					text.inputEl.type = 'password';
 				});
 
@@ -175,9 +232,9 @@ export class FlintSettingsTab extends PluginSettingTab {
 			return;
 		}
 
-		// ── Step 3: Signed in — show vault selector ───────────────────────────
+		// Step 3: Signed in
 		new Setting(containerEl)
-			.setName('Firebase Account')
+			.setName('Account')
 			.setDesc(this.plugin.settings.userEmail)
 			.addButton(btn => btn
 				.setButtonText('Sign out')
@@ -188,16 +245,19 @@ export class FlintSettingsTab extends PluginSettingTab {
 					this.display();
 				}));
 
-		const allVaultOptions = await this.#fetchVaultOptions();
+		const noVaultSelected = this.plugin.settings.remoteConnectedVault === 'default'
+			|| !vaultNames.includes(this.plugin.settings.remoteConnectedVault);
 
-		new Setting(containerEl)
-			.setName('Current Connected Remote Vault')
-			.setDesc('Active Firebase Vault')
-			.addDropdown(options => options
-				.addOptions(allVaultOptions)
-				.onChange(async (name: string) => {
-					this.plugin.setRemoteDestination(name);
-				}));
+		if (noVaultSelected) {
+			new Setting(containerEl)
+				.setName('Vault not initialized')
+				.setDesc('Go to the Vaults tab to initialize your vault on Firebase.')
+				.addButton(btn => btn
+					.setButtonText('Go to Vaults')
+					.setCta()
+					.onClick(() => { this.activeTab = 'vaults'; this.display(); }));
+			return;
+		}
 
 		new Setting(containerEl)
 			.setName('Device ID')
@@ -205,16 +265,96 @@ export class FlintSettingsTab extends PluginSettingTab {
 			.setTooltip('Stable identifier for this device, used by the CRDT sync engine');
 	}
 
-	#buildConfig(): FirebaseConfig {
-		const s = this.plugin.settings;
-		return {
-			apiKey: s.firebaseApiKey,
-			authDomain: s.firebaseAuthDomain,
-			storageBucket: s.firebaseStorageBucket,
-			projectId: s.firebaseProjectId,
-			messagingSenderId: s.firebaseMessagingSenderId,
-			appId: s.firebaseAppId,
-		};
+	// ── Vaults tab ───────────────────────────────────────────────────────────
+
+	private renderVaults(containerEl: HTMLElement, isSignedIn: boolean, vaultNames: string[]) {
+		if (!isSignedIn) {
+			containerEl.createEl('p', { text: 'Sign in first via the General tab.', cls: 'setting-item-description' });
+			return;
+		}
+
+		new Setting(containerEl)
+			.setName('Active vault')
+			.setDesc('Vault to sync with')
+			.addDropdown(drop => {
+				for (const name of vaultNames) drop.addOption(name, name);
+				drop.setValue(this.plugin.settings.remoteConnectedVault);
+				drop.onChange(async (name) => { await this.plugin.setRemoteDestination(name); });
+			});
+
+		containerEl.createEl('h3', { text: 'Remote vaults' });
+
+		if (vaultNames.length === 0) {
+			containerEl.createEl('p', { text: 'No remote vaults yet. Create one below.', cls: 'setting-item-description' });
+		}
+
+		for (const vaultName of vaultNames) {
+			new Setting(containerEl)
+				.setName(vaultName)
+				.addButton(btn => btn
+					.setButtonText('Delete')
+					.setWarning()
+					.onClick(async () => {
+						await this.plugin.dataTools.deleteVault(vaultName);
+						if (this.plugin.settings.remoteConnectedVault === vaultName) {
+							await this.plugin.setRemoteDestination('default');
+						}
+						this.display();
+					}));
+		}
+
+		containerEl.createEl('h3', { text: 'New vault' });
+
+		let newVaultName = '';
+		new Setting(containerEl)
+			.setName('Name')
+			.addText(text => text
+				.setPlaceholder('vault-name')
+				.onChange(val => { newVaultName = val.trim(); }))
+			.addButton(btn => btn
+				.setButtonText('Create')
+				.setCta()
+				.onClick(async () => {
+					if (!newVaultName) return;
+					await this.plugin.setRemoteDestination(newVaultName);
+					this.display();
+				}));
+	}
+
+	// ── Sync tab ─────────────────────────────────────────────────────────────
+
+	private renderSync(containerEl: HTMLElement, isSignedIn: boolean) {
+		if (!isSignedIn) {
+			containerEl.createEl('p', { text: 'Sign in first via the General tab.', cls: 'setting-item-description' });
+			return;
+		}
+
+		new Setting(containerEl)
+			.setName('Scheduled sync')
+			.setDesc('Automatically sync at a fixed interval')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.scheduledSyncEnabled)
+				.onChange(async (val) => {
+					this.plugin.settings.scheduledSyncEnabled = val;
+					await this.plugin.saveSettings();
+					this.plugin.setupScheduledSync();
+					this.display();
+				}));
+
+		if (this.plugin.settings.scheduledSyncEnabled) {
+			new Setting(containerEl)
+				.setName('Sync interval')
+				.setDesc('Minutes between automatic syncs')
+				.addText(text => text
+					.setValue(String(this.plugin.settings.scheduledSyncIntervalMinutes))
+					.onChange(async (val) => {
+						const n = parseInt(val);
+						if (!isNaN(n) && n > 0) {
+							this.plugin.settings.scheduledSyncIntervalMinutes = n;
+							await this.plugin.saveSettings();
+							this.plugin.setupScheduledSync();
+						}
+					}));
+		}
 	}
 }
-
