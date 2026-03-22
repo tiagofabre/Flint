@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownView, Notice, Plugin, SuggestModal } from 'obsidian';
+import { App, Editor, MarkdownView, Notice, Plugin, SuggestModal, TAbstractFile, TFile, debounce } from 'obsidian';
 import { ListResult, listAll } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
 import { FlintDataTransfer } from 'datatools';
@@ -13,6 +13,11 @@ export default class FlintPlugin extends Plugin {
 	settings: FlintPluginSettings;
 	statusBar: HTMLElement;
 	dataTools: FlintDataTransfer;
+
+	private readonly debouncedSync = debounce(() => {
+		if (!this.settings.userEmail) return;
+		this.dataTools.syncAll(this.app.vault, this.settings);
+	}, 5000, true);
 
 	async onload() {
 		await initAutomerge();
@@ -40,6 +45,7 @@ export default class FlintPlugin extends Plugin {
 				if (user) {
 					this.settings.userEmail = user.email ?? '';
 					setUserVaultRef(user.uid);
+					this.debouncedSync(); // sync on startup / sign-in
 				} else {
 					this.settings.userEmail = '';
 				}
@@ -55,6 +61,23 @@ export default class FlintPlugin extends Plugin {
 			this.dataTools.syncAll(this.app.vault, this.settings);
 		});
 		syncRibbon.addClass('flint-sync-ribbon-class');
+
+		// Sync on local file changes (debounced — all events share the same timer)
+		this.registerEvent(
+			this.app.vault.on('modify', (file: TAbstractFile) => {
+				if (file instanceof TFile && file.extension === 'md') this.debouncedSync();
+			})
+		);
+		this.registerEvent(
+			this.app.vault.on('create', (file: TAbstractFile) => {
+				if (file instanceof TFile && file.extension === 'md') this.debouncedSync();
+			})
+		);
+		this.registerEvent(
+			this.app.vault.on('delete', (file: TAbstractFile) => {
+				if (file instanceof TFile && file.extension === 'md') this.debouncedSync();
+			})
+		);
 
 		this.statusBar = this.addStatusBarItem();
 		if (this.settings.remoteConnectedVault !== 'default') {

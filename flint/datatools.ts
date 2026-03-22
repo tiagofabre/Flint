@@ -234,7 +234,13 @@ export class FlintDataTransfer {
 		}
 
 		if (!isLocal && isRemote) {
-			await this.syncNewRemote(relPath, ctx);
+			if (ctx.state) {
+				// Previously synced — local deletion is intentional, remove from remote
+				await this.syncDeletedLocal(relPath, ctx);
+			} else {
+				// Never synced locally — new remote file, download it
+				await this.syncNewRemote(relPath, ctx);
+			}
 			return 'synced';
 		}
 
@@ -316,6 +322,16 @@ export class FlintDataTransfer {
 		const remoteAmHash = await this.sha256Bytes(remoteAmBytes);
 		ctx.updatedSyncState[relPath] = { flintId, localHash, remoteAmHash };
 		ctx.updatedManifest[relPath] = remoteAmHash;
+	}
+
+	/** File deleted locally — remove from remote */
+	private async syncDeletedLocal(relPath: string, ctx: SyncCtx): Promise<void> {
+		await Promise.all([
+			deleteObject(this.sRef(`${ctx.base}/${relPath}`)).catch(() => {}),
+			deleteObject(this.sRef(`${ctx.base}/${relPath}.am`)).catch(() => {}),
+		]);
+		delete ctx.updatedManifest[relPath];
+		delete ctx.updatedSyncState[relPath];
 	}
 
 	/** File changed locally, remote is unchanged */
