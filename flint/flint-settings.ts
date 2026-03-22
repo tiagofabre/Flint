@@ -4,6 +4,14 @@ import { vaultRef, auth, setupFirebase, FirebaseConfig } from 'firebase-tools';
 import { ListResult, listAll } from 'firebase/storage';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 
+export interface FileSyncState {
+	flintId: string;
+	localHash: string;    // sha256 of file content at last successful sync
+	remoteAmHash: string; // sha256 of remote .am bytes at last successful sync
+}
+
+export type SyncState = Record<string, FileSyncState>;
+
 export interface FlintPluginSettings {
 	remoteConnectedVault: string;
 	userEmail: string;
@@ -13,6 +21,7 @@ export interface FlintPluginSettings {
 	firebaseProjectId: string;
 	firebaseMessagingSenderId: string;
 	firebaseAppId: string;
+	deviceId: string;
 }
 
 export const DEFAULT_SETTINGS: FlintPluginSettings = {
@@ -24,6 +33,7 @@ export const DEFAULT_SETTINGS: FlintPluginSettings = {
 	firebaseProjectId: '',
 	firebaseMessagingSenderId: '',
 	firebaseAppId: '',
+	deviceId: '',
 }
 
 export class FlintSettingsTab extends PluginSettingTab {
@@ -188,6 +198,11 @@ export class FlintSettingsTab extends PluginSettingTab {
 				.onChange(async (name: string) => {
 					this.plugin.setRemoteDestination(name);
 				}));
+
+		new Setting(containerEl)
+			.setName('Device ID')
+			.setDesc(this.plugin.settings.deviceId || '(not yet assigned)')
+			.setTooltip('Stable identifier for this device, used by the CRDT sync engine');
 	}
 
 	#buildConfig(): FirebaseConfig {

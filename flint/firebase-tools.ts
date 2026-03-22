@@ -23,6 +23,11 @@ export function setupFirebase(config: FirebaseConfig) {
 	app = existingApps.length > 0 ? existingApps[0] : initializeApp(config);
 	storage = getStorage(app);
 	storageRef = ref(storage);
-	vaultRef = ref(storageRef, 'vaults');
+	vaultRef = undefined; // set per-user after sign-in via setUserVaultRef
 	auth = getAuth(app);
+}
+
+export function setUserVaultRef(uid: string) {
+	if (!storage) return;
+	vaultRef = ref(storage, `users/${uid}/vaults`);
 }

@@ -2,8 +2,9 @@ import { App, Editor, MarkdownView, Notice, Plugin, SuggestModal } from 'obsidia
 import { ListResult, listAll } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
 import { FlintDataTransfer } from 'datatools';
-import { vaultRef, auth, setupFirebase } from 'firebase-tools';
+import { vaultRef, auth, setupFirebase, setUserVaultRef } from 'firebase-tools';
 import { FlintPluginSettings, FlintSettingsTab, DEFAULT_SETTINGS } from 'flint-settings';
+import { initAutomerge } from 'crdt';
 
 export let currentVaultName: string = 'vaults';
 export let remoteVaultName: string = '';
@@ -14,10 +15,17 @@ export default class FlintPlugin extends Plugin {
 	dataTools: FlintDataTransfer;
 
 	async onload() {
+		await initAutomerge();
 		await this.loadSettings();
 		currentVaultName = await this.app.vault.getName();
 		remoteVaultName = this.settings.remoteConnectedVault;
 		this.dataTools = new FlintDataTransfer(this);
+
+		// Generate a stable device ID if not yet assigned
+		if (!this.settings.deviceId) {
+			this.settings.deviceId = crypto.randomUUID();
+			await this.saveSettings();
+		}
 
 		if (this.settings.firebaseApiKey) {
 			setupFirebase({
@@ -29,34 +37,24 @@ export default class FlintPlugin extends Plugin {
 				appId: this.settings.firebaseAppId,
 			});
 			onAuthStateChanged(auth!, async (user) => {
-				this.settings.userEmail = user ? (user.email ?? '') : '';
+				if (user) {
+					this.settings.userEmail = user.email ?? '';
+					setUserVaultRef(user.uid);
+				} else {
+					this.settings.userEmail = '';
+				}
 				await this.saveSettings();
 			});
 		}
 
-		const uploadRibbon = this.addRibbonIcon('upload', 'Upload Files', (evt: MouseEvent) => {
+		const syncRibbon = this.addRibbonIcon('refresh-cw', 'Sync Vault', (evt: MouseEvent) => {
 			if (!this.settings.userEmail) {
 				new Notice('Please sign in first (Flint Settings)');
 				return;
 			}
-			new Notice('Attempting Upload');
-			this.dataTools.forceUploadFiles(this.app.vault, this.settings);
+			this.dataTools.syncAll(this.app.vault, this.settings);
 		});
-		uploadRibbon.addClass('flint-upload-ribbon-class');
-
-		const downloadRibbon = this.addRibbonIcon('download', 'Download Files', (evt: MouseEvent) => {
-			if (!this.settings.userEmail) {
-				new Notice('Please sign in first (Flint Settings)');
-				return;
-			}
-			if (remoteVaultName !== '') {
-				new Notice('Downloadin!');
-				this.dataTools.importVault(currentVaultName, remoteVaultName);
-			} else {
-				new Notice('Please select target cloud vault!');
-			}
-		});
-		downloadRibbon.addClass('flint-download-ribbon-class');
+		syncRibbon.addClass('flint-sync-ribbon-class');
 
 		this.statusBar = this.addStatusBarItem();
 		if (this.settings.remoteConnectedVault !== 'default') {
@@ -75,6 +73,23 @@ export default class FlintPlugin extends Plugin {
 				}
 				const selectionModal = new CloudVaultSelectModal(this.app, this.statusBar, this, this.settings);
 				selectionModal.open();
+			}
+		});
+
+		this.addCommand({
+			id: 'force-push',
+			name: 'Force Push (overwrite remote)',
+			callback: () => {
+				if (!this.settings.userEmail) {
+					new Notice('Please sign in first (Flint Settings)');
+					return;
+				}
+				new Notice('Force Push: clearing remote and re-uploading everything…');
+				this.dataTools.forcePush(this.app.vault, this.settings).then(() => {
+					new Notice('Force Push complete');
+				}).catch((err) => {
+					new Notice(`Force Push failed: ${err}`);
+				});
 			}
 		});
 
