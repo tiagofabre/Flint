@@ -3,9 +3,8 @@
 	"name": "Flint",
 	"version": "1.0.1",
 	"minAppVersion": "0.15.0",
-	"description": "This app uses cloud buckets to upload not files.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"description": "Sync your Obsidian vault across devices using Firebase Storage with CRDT-based conflict resolution.",
+	"author": "Tiago Fabre, Andrew Mao",
+	"authorUrl": "https://github.com/tiago-fabre",
 	"isDesktopOnly": false
 }

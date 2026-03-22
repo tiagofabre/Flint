@@ -1,95 +1,138 @@
-# Obsidian Sample Plugin
+# Flint
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+**Flint** is an Obsidian plugin that syncs your vault across devices using [Firebase Storage](https://firebase.google.com/products/storage) as the backend. It uses [Automerge](https://automerge.org/) CRDTs for conflict-free merging when multiple devices edit the same note simultaneously.
 
-This project uses Typescript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in Typescript Definition format, which contains TSDoc comments describing what it does.
+---
 
-**Note:** The Obsidian API is still in early alpha and is subject to change at any time!
+## Features
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- **Cross-device sync** — notes are stored in your own Firebase Storage bucket; no third-party server has access to your data.
+- **CRDT conflict resolution** — concurrent edits from different devices are merged automatically using Automerge, so you never lose work.
+- **Bring-your-own Firebase** — you control the bucket and the auth rules. Flint never touches a server you don't own.
+- **Incremental sync** — only changed files are uploaded or downloaded on each sync cycle.
 
-## First time developing plugins?
+---
 
-Quick starting guide for new plugin devs:
+## Prerequisites
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+1. A [Firebase project](https://console.firebase.google.com/) with **Storage** and **Authentication** enabled.
+2. Email/password authentication turned on in Firebase Auth (used to scope reads/writes to the signed-in user).
+3. Firebase Storage security rules that protect your data (see [Recommended Rules](#recommended-storage-rules) below).
 
-## Releasing new releases
+---
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+## Setup Guide
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+### 1. Create a Firebase project
 
-## Adding your plugin to the community plugin list
+1. Go to [https://console.firebase.google.com/](https://console.firebase.google.com/) and click **Add project**.
+2. Give the project a name and follow the wizard. You do not need Google Analytics.
 
-- Check https://github.com/obsidianmd/obsidian-releases/blob/master/plugin-review.md
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+### 2. Enable Firebase Storage
 
-## How to use
+1. In the Firebase console, open **Build → Storage**.
+2. Click **Get started** and choose a region close to you.
+3. Start in **production mode** (you will tighten the rules in a moment).
 
-- Clone this repo.
-- `npm i` or `yarn` to install dependencies
-- `npm run dev` to start compilation in watch mode.
+### 3. Enable Email/Password Authentication
 
-## Manually installing the plugin
+1. In the Firebase console, open **Build → Authentication**.
+2. Click **Get started**, then choose **Email/Password** and enable it.
+3. Create at least one user account via **Users → Add user**.
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+### 4. Grab your Firebase config
 
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
+1. In the Firebase console, click the gear icon → **Project settings**.
+2. Under **Your apps**, click the `</>` (web) icon to register a web app.
+3. Copy the `firebaseConfig` object. You will need these values:
+   - `apiKey`
+   - `authDomain`
+   - `projectId`
+   - `storageBucket`
+   - `messagingSenderId`
+   - `appId`
 
-## Funding URL
+### 5. Configure Flint in Obsidian
 
-You can include funding URLs where people who use your plugin can financially support it.
+1. In Obsidian, open **Settings → Community plugins** and enable Flint.
+2. Open **Settings → Flint**.
+3. Paste each value from the `firebaseConfig` into the corresponding field.
+4. Enter the email and password for the Firebase Auth user you created.
+5. Click **Save**.
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+---
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+## How to Use
+
+### Syncing your vault
+
+Click the **Sync** ribbon icon (refresh arrows) on the left sidebar. Flint will:
+
+1. Sign in to Firebase with your credentials.
+2. Walk every `.md` file in your vault.
+3. For each file, merge the local Automerge doc with the remote copy stored in Firebase Storage.
+4. Upload the merged result.
+
+The first sync uploads all files; subsequent syncs only transfer diffs.
+
+### Force Push
+
+If you want to overwrite the remote state with your local vault (e.g. after a manual fix), open the Command Palette (`Cmd/Ctrl + P`) and run **Flint: Force push vault to Firebase**. This skips the merge step and uploads your local files directly.
+
+### Importing a vault on a new device
+
+1. Install Flint and configure it with the same Firebase project credentials.
+2. Click the **Sync** ribbon icon.
+3. Flint will download all notes from Firebase and merge them into your local vault.
+
+---
+
+## Recommended Storage Rules
+
+Paste the following into **Firebase console → Storage → Rules** to ensure users can only access their own files:
+
 ```
-
-If you have multiple URLs, you can also do:
-
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /vaults/{vaultName}/{allPaths=**} {
+      allow read, write: if request.auth != null
+                         && request.auth.token.email != null;
     }
+  }
 }
 ```
 
-## API Documentation
+For stricter rules, scope to a specific email address:
 
-See https://github.com/obsidianmd/obsidian-api
+```
+allow read, write: if request.auth.token.email == "you@example.com";
+```
+
+---
+
+## Firebase Storage Layout
+
+```
+vaults/
+  <vault-name>/
+    path/to/note.md          ← Markdown with _flint_id frontmatter
+    path/to/note.md.am       ← Automerge binary (CRDT state)
+```
+
+Each note gets a companion `.md.am` file that tracks its full edit history for merging.
+
+---
+
+## Known Limitations
+
+- **Self-hosted Firebase only** — you must supply your own Firebase project and credentials. There is no hosted Flint service.
+- **Markdown files only** — binary attachments (images, PDFs, etc.) are not synced.
+- **No real-time sync** — sync is triggered manually via the ribbon icon or on plugin load. There is no background polling.
+- **Large vaults** — the initial sync of a large vault may take a while due to Firebase Storage upload limits and Automerge doc serialization overhead.
+
+---
+
+## License
+
+MIT — see [LICENSE](../LICENSE).

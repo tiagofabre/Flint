@@ -1,7 +1,7 @@
 {
 	"name": "flint-plugin",
-	"version": "1.0.0",
-	"description": "This app uses cloud buckets to upload not files",
+	"version": "1.0.1",
+	"description": "Sync your Obsidian vault across devices using Firebase Storage with CRDT-based conflict resolution.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -12,7 +12,7 @@
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},
 	"keywords": [],
-	"author": "",
+	"author": "Tiago Fabre, Andrew Mao",
 	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^16.11.6",
@@ -27,8 +27,6 @@
 	},
 	"dependencies": {
 		"@automerge/automerge": "^2.0.0",
-		"chokidar": "^3.5.3",
-		"firebase": "^11.0.0",
-		"lucide": "^0.263.0"
+		"firebase": "^11.0.0"
 	}
 }
