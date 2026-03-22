@@ -20,7 +20,7 @@ export class FlintDataTransfer  {
 		//deletes all files in this dir and in children dirs
 
 		for (let i = 0; i < remoteVaultFileList.items.length; i++){
-			const deleteRef: StorageReference = ref(storage, remoteVaultFileList.items[i].fullPath);
+			const deleteRef: StorageReference = ref(storage!, remoteVaultFileList.items[i].fullPath);
 			deleteObject(deleteRef);
 		}
 
@@ -36,7 +36,7 @@ export class FlintDataTransfer  {
 		const remoteVaultName: string = settings.remoteConnectedVault;
 
 		if (remoteVaultName){
-			const remoteVaultRef: StorageReference = ref(vaultRef, `${remoteVaultName}`);
+			const remoteVaultRef: StorageReference = ref(vaultRef!, `${remoteVaultName}`);
 			const remoteVaultFileList: ListResult = await listAll(remoteVaultRef);
 			await this.deleteFile(remoteVaultFileList)
 		}
@@ -66,7 +66,7 @@ export class FlintDataTransfer  {
 		//Check if destination has been set
 		if (remoteVaultName !== '') {
 			const pathString: string = await `${remoteVaultName}/${files[index].path}`;
-			const pathRef: StorageReference = await ref(vaultRef, pathString);
+			const pathRef: StorageReference = await ref(vaultRef!, pathString);
 			const data: ArrayBuffer = await this.plugin.app.vault.adapter.readBinary(files[index].path);
 
 			//feed params into upload func from firebase
@@ -103,7 +103,7 @@ export class FlintDataTransfer  {
 		 * @param localVault is the target local vault where files will be written to
 		 */
 		new Notice(`Remote Vault: ${remoteVault}`);
-		const remoteVaultRef: StorageReference = ref(vaultRef, `${remoteVault}`);
+		const remoteVaultRef: StorageReference = ref(vaultRef!, `${remoteVault}`);
 		const remoteVaultFileList: ListResult = await listAll(remoteVaultRef);
 
 		//pass in all files and prefixes (folders) into download function.
@@ -198,7 +198,7 @@ export class FlintDataTransfer  {
 
 	async fetchFile(filePathString: string): Promise<ArrayBuffer> {
 
-		const filePathRef: StorageReference = ref(storage, filePathString);
+		const filePathRef: StorageReference = ref(storage!, filePathString);
 		const fileURL: string = await getDownloadURL(filePathRef);
 		console.log(`${fileURL}`);
 

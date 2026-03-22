@@ -36,7 +36,7 @@ __export(main_exports, {
   remoteVaultName: () => remoteVaultName
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian4 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // node_modules/@firebase/util/dist/postinstall.mjs
 var getDefaultsFromPostinstall = () => void 0;
@@ -1155,15 +1155,15 @@ var ComponentContainer = class {
    * if overwrite is false: throw an exception
    */
   addComponent(component) {
-    const provider2 = this.getProvider(component.name);
-    if (provider2.isComponentSet()) {
+    const provider = this.getProvider(component.name);
+    if (provider.isComponentSet()) {
       throw new Error(`Component ${component.name} has already been registered with ${this.name}`);
     }
-    provider2.setComponent(component);
+    provider.setComponent(component);
   }
   addOrOverwriteComponent(component) {
-    const provider2 = this.getProvider(component.name);
-    if (provider2.isComponentSet()) {
+    const provider = this.getProvider(component.name);
+    if (provider.isComponentSet()) {
       this.providers.delete(component.name);
     }
     this.addComponent(component);
@@ -1179,9 +1179,9 @@ var ComponentContainer = class {
     if (this.providers.has(name5)) {
       return this.providers.get(name5);
     }
-    const provider2 = new Provider(name5, this);
-    this.providers.set(name5, provider2);
-    return provider2;
+    const provider = new Provider(name5, this);
+    this.providers.set(name5, provider);
+    return provider;
   }
   getProviders() {
     return Array.from(this.providers.values());
@@ -1510,9 +1510,9 @@ var PlatformLoggerServiceImpl = class {
   // auth token refresh, and installations will send this string.
   getPlatformInfoString() {
     const providers = this.container.getProviders();
-    return providers.map((provider2) => {
-      if (isVersionServiceProvider(provider2)) {
-        const service = provider2.getImmediate();
+    return providers.map((provider) => {
+      if (isVersionServiceProvider(provider)) {
+        const service = provider.getImmediate();
         return `${service.library}/${service.version}`;
       } else {
         return null;
@@ -1520,8 +1520,8 @@ var PlatformLoggerServiceImpl = class {
     }).filter((logString) => logString).join(" ");
   }
 };
-function isVersionServiceProvider(provider2) {
-  const component = provider2.getComponent();
+function isVersionServiceProvider(provider) {
+  const component = provider.getComponent();
   return (component === null || component === void 0 ? void 0 : component.type) === "VERSION";
 }
 var name$q = "@firebase/app";
@@ -1783,6 +1783,9 @@ function getApp(name5 = DEFAULT_ENTRY_NAME2) {
     throw ERROR_FACTORY.create("no-app", { appName: name5 });
   }
   return app2;
+}
+function getApps() {
+  return Array.from(_apps.values());
 }
 function registerVersion(libraryKeyOrName, version5, variant) {
   var _a;
@@ -4454,14 +4457,6 @@ function registerStorage() {
 }
 registerStorage();
 
-// datatools.ts
-var import_obsidian = require("obsidian");
-
-// node_modules/firebase/app/dist/esm/index.esm.js
-var name3 = "firebase";
-var version3 = "11.10.0";
-registerVersion(name3, version3, "app");
-
 // node_modules/tslib/tslib.es6.js
 function __rest(s, e) {
   var t = {};
@@ -4512,19 +4507,6 @@ function _errorWithCustomMessage(auth2, code, message) {
 }
 function _serverAppCurrentUserOperationNotSupportedError(auth2) {
   return _errorWithCustomMessage(auth2, "operation-not-supported-in-this-environment", "Operations that alter the current user are not supported in conjunction with FirebaseServerApp");
-}
-function _assertInstanceOf(auth2, object, instance) {
-  const constructorInstance = instance;
-  if (!(object instanceof constructorInstance)) {
-    if (constructorInstance.name !== object.constructor.name) {
-      _fail(
-        auth2,
-        "argument-error"
-        /* AuthErrorCode.ARGUMENT_ERROR */
-      );
-    }
-    throw _errorWithCustomMessage(auth2, "argument-error", `Type of ${object.constructor.name} does not match expected instance.Did you pass a reference from a different Auth SDK?`);
-  }
 }
 function createErrorInternal(authOrCode, ...rest) {
   if (typeof authOrCode !== "string") {
@@ -5331,14 +5313,14 @@ function mergeProviderData(original, newData) {
 }
 function extractProviderData(providers) {
   return providers.map((_a) => {
-    var { providerId } = _a, provider2 = __rest(_a, ["providerId"]);
+    var { providerId } = _a, provider = __rest(_a, ["providerId"]);
     return {
       providerId,
-      uid: provider2.rawId || "",
-      displayName: provider2.displayName || null,
-      email: provider2.email || null,
-      phoneNumber: provider2.phoneNumber || null,
-      photoURL: provider2.photoUrl || null
+      uid: provider.rawId || "",
+      displayName: provider.displayName || null,
+      email: provider.email || null,
+      phoneNumber: provider.phoneNumber || null,
+      photoURL: provider.photoUrl || null
     };
   });
 }
@@ -6981,10 +6963,10 @@ async function _initializeRecaptchaConfig(auth2) {
   }
 }
 function initializeAuth(app2, deps) {
-  const provider2 = _getProvider(app2, "auth");
-  if (provider2.isInitialized()) {
-    const auth3 = provider2.getImmediate();
-    const initialOptions = provider2.getOptions();
+  const provider = _getProvider(app2, "auth");
+  if (provider.isInitialized()) {
+    const auth3 = provider.getImmediate();
+    const initialOptions = provider.getOptions();
     if (deepEqual(initialOptions, deps !== null && deps !== void 0 ? deps : {})) {
       return auth3;
     } else {
@@ -6995,7 +6977,7 @@ function initializeAuth(app2, deps) {
       );
     }
   }
-  const auth2 = provider2.initialize({ options: deps });
+  const auth2 = provider.initialize({ options: deps });
   return auth2;
 }
 function _initializeAuthInstance(auth2, deps) {
@@ -7921,6 +7903,9 @@ var TwitterAuthProvider = class _TwitterAuthProvider extends BaseOAuthProvider {
 };
 TwitterAuthProvider.TWITTER_SIGN_IN_METHOD = "twitter.com";
 TwitterAuthProvider.PROVIDER_ID = "twitter.com";
+async function signUp(auth2, request) {
+  return _performSignInRequest(auth2, "POST", "/v1/accounts:signUp", _addTidIfNecessary(auth2, request));
+}
 var UserCredentialImpl = class _UserCredentialImpl {
   constructor(params) {
     this.user = params.user;
@@ -8046,11 +8031,67 @@ async function _signInWithCredential(auth2, credential, bypassAuthState = false)
   }
   return userCredential;
 }
+async function signInWithCredential(auth2, credential) {
+  return _signInWithCredential(_castAuth(auth2), credential);
+}
+async function recachePasswordPolicy(auth2) {
+  const authInternal = _castAuth(auth2);
+  if (authInternal._getPasswordPolicyInternal()) {
+    await authInternal._updatePasswordPolicy();
+  }
+}
+async function createUserWithEmailAndPassword(auth2, email, password) {
+  if (_isFirebaseServerApp(auth2.app)) {
+    return Promise.reject(_serverAppCurrentUserOperationNotSupportedError(auth2));
+  }
+  const authInternal = _castAuth(auth2);
+  const request = {
+    returnSecureToken: true,
+    email,
+    password,
+    clientType: "CLIENT_TYPE_WEB"
+    /* RecaptchaClientType.WEB */
+  };
+  const signUpResponse = handleRecaptchaFlow(
+    authInternal,
+    request,
+    "signUpPassword",
+    signUp,
+    "EMAIL_PASSWORD_PROVIDER"
+    /* RecaptchaAuthProvider.EMAIL_PASSWORD_PROVIDER */
+  );
+  const response = await signUpResponse.catch((error) => {
+    if (error.code === `auth/${"password-does-not-meet-requirements"}`) {
+      void recachePasswordPolicy(auth2);
+    }
+    throw error;
+  });
+  const userCredential = await UserCredentialImpl._fromIdTokenResponse(authInternal, "signIn", response);
+  await authInternal._updateCurrentUser(userCredential.user);
+  return userCredential;
+}
+function signInWithEmailAndPassword(auth2, email, password) {
+  if (_isFirebaseServerApp(auth2.app)) {
+    return Promise.reject(_serverAppCurrentUserOperationNotSupportedError(auth2));
+  }
+  return signInWithCredential(getModularInstance(auth2), EmailAuthProvider.credential(email, password)).catch(async (error) => {
+    if (error.code === `auth/${"password-does-not-meet-requirements"}`) {
+      void recachePasswordPolicy(auth2);
+    }
+    throw error;
+  });
+}
 function onIdTokenChanged(auth2, nextOrObserver, error, completed) {
   return getModularInstance(auth2).onIdTokenChanged(nextOrObserver, error, completed);
 }
 function beforeAuthStateChanged(auth2, callback, onAbort) {
   return getModularInstance(auth2).beforeAuthStateChanged(callback, onAbort);
+}
+function onAuthStateChanged(auth2, nextOrObserver, error, completed) {
+  return getModularInstance(auth2).onAuthStateChanged(nextOrObserver, error, completed);
+}
+function signOut(auth2) {
+  return getModularInstance(auth2).signOut();
 }
 function startEnrollPhoneMfa(auth2, request) {
   return _performApiRequest(auth2, "POST", "/v2/accounts/mfaEnrollment:start", _addTidIfNecessary(auth2, request));
@@ -9386,24 +9427,10 @@ var AbstractPopupRedirectOperation = class {
   }
 };
 var _POLL_WINDOW_CLOSE_TIMEOUT = new Delay(2e3, 1e4);
-async function signInWithPopup(auth2, provider2, resolver) {
-  if (_isFirebaseServerApp(auth2.app)) {
-    return Promise.reject(_createError(
-      auth2,
-      "operation-not-supported-in-this-environment"
-      /* AuthErrorCode.OPERATION_NOT_SUPPORTED */
-    ));
-  }
-  const authInternal = _castAuth(auth2);
-  _assertInstanceOf(auth2, provider2, FederatedAuthProvider);
-  const resolverInternal = _withDefaultResolver(authInternal, resolver);
-  const action = new PopupOperation(authInternal, "signInViaPopup", provider2, resolverInternal);
-  return action.executeNotNull();
-}
 var PopupOperation = class _PopupOperation extends AbstractPopupRedirectOperation {
-  constructor(auth2, filter, provider2, resolver, user) {
+  constructor(auth2, filter, provider, resolver, user) {
     super(auth2, filter, resolver, user);
-    this.provider = provider2;
+    this.provider = provider;
     this.authWindow = null;
     this.pollId = null;
     if (_PopupOperation.currentPopupAction) {
@@ -9929,7 +9956,7 @@ function openAsNewWindowIOS(url, target) {
 var WIDGET_PATH = "__/auth/handler";
 var EMULATOR_WIDGET_PATH = "emulator/auth/handler";
 var FIREBASE_APP_CHECK_FRAGMENT_ID = encodeURIComponent("fac");
-async function _getRedirectUrl(auth2, provider2, authType, redirectUrl, eventId, additionalParams) {
+async function _getRedirectUrl(auth2, provider, authType, redirectUrl, eventId, additionalParams) {
   _assert(
     auth2.config.authDomain,
     auth2,
@@ -9950,18 +9977,18 @@ async function _getRedirectUrl(auth2, provider2, authType, redirectUrl, eventId,
     v: SDK_VERSION,
     eventId
   };
-  if (provider2 instanceof FederatedAuthProvider) {
-    provider2.setDefaultLanguage(auth2.languageCode);
-    params.providerId = provider2.providerId || "";
-    if (!isEmpty(provider2.getCustomParameters())) {
-      params.customParameters = JSON.stringify(provider2.getCustomParameters());
+  if (provider instanceof FederatedAuthProvider) {
+    provider.setDefaultLanguage(auth2.languageCode);
+    params.providerId = provider.providerId || "";
+    if (!isEmpty(provider.getCustomParameters())) {
+      params.customParameters = JSON.stringify(provider.getCustomParameters());
     }
     for (const [key, value] of Object.entries(additionalParams || {})) {
       params[key] = value;
     }
   }
-  if (provider2 instanceof BaseOAuthProvider) {
-    const scopes = provider2.getScopes().filter((scope) => scope !== "");
+  if (provider instanceof BaseOAuthProvider) {
+    const scopes = provider.getScopes().filter((scope) => scope !== "");
     if (scopes.length > 0) {
       params.scopes = scopes.join(",");
     }
@@ -9997,15 +10024,15 @@ var BrowserPopupRedirectResolver = class {
   }
   // Wrapping in async even though we don't await anywhere in order
   // to make sure errors are raised as promise rejections
-  async _openPopup(auth2, provider2, authType, eventId) {
+  async _openPopup(auth2, provider, authType, eventId) {
     var _a;
     debugAssert((_a = this.eventManagers[auth2._key()]) === null || _a === void 0 ? void 0 : _a.manager, "_initialize() not called before _openPopup()");
-    const url = await _getRedirectUrl(auth2, provider2, authType, _getCurrentUrl(), eventId);
+    const url = await _getRedirectUrl(auth2, provider, authType, _getCurrentUrl(), eventId);
     return _open(auth2, url, _generateEventId());
   }
-  async _openRedirect(auth2, provider2, authType, eventId) {
+  async _openRedirect(auth2, provider, authType, eventId) {
     await this._originValidation(auth2);
-    const url = await _getRedirectUrl(auth2, provider2, authType, _getCurrentUrl(), eventId);
+    const url = await _getRedirectUrl(auth2, provider, authType, _getCurrentUrl(), eventId);
     _setWindowLocation(url);
     return new Promise(() => {
     });
@@ -10284,8 +10311,8 @@ var TotpSecret = class _TotpSecret {
 function _isEmptyString(input) {
   return typeof input === "undefined" || (input === null || input === void 0 ? void 0 : input.length) === 0;
 }
-var name4 = "@firebase/auth";
-var version4 = "1.10.8";
+var name3 = "@firebase/auth";
+var version3 = "1.10.8";
 var AuthInterop = class {
   constructor(auth2) {
     this.auth = auth2;
@@ -10406,8 +10433,8 @@ function registerAuth(clientPlatform) {
     "EXPLICIT"
     /* InstantiationMode.EXPLICIT */
   ));
-  registerVersion(name4, version4, getVersionForPlatform(clientPlatform));
-  registerVersion(name4, version4, "esm2017");
+  registerVersion(name3, version3, getVersionForPlatform(clientPlatform));
+  registerVersion(name3, version3, "esm2017");
 }
 var DEFAULT_ID_TOKEN_MAX_AGE = 5 * 60;
 var authIdTokenMaxAge = getExperimentalSetting("authIdTokenMaxAge") || DEFAULT_ID_TOKEN_MAX_AGE;
@@ -10431,9 +10458,9 @@ var mintCookieFactory = (url) => async (user) => {
   });
 };
 function getAuth(app2 = getApp()) {
-  const provider2 = _getProvider(app2, "auth");
-  if (provider2.isInitialized()) {
-    return provider2.getImmediate();
+  const provider = _getProvider(app2, "auth");
+  if (provider.isInitialized()) {
+    return provider.getImmediate();
   }
   const auth2 = initializeAuth(app2, {
     popupRedirectResolver: browserPopupRedirectResolver,
@@ -10490,26 +10517,28 @@ registerAuth(
   /* ClientPlatform.BROWSER */
 );
 
+// datatools.ts
+var import_obsidian = require("obsidian");
+
+// node_modules/firebase/app/dist/esm/index.esm.js
+var name4 = "firebase";
+var version4 = "11.10.0";
+registerVersion(name4, version4, "app");
+
 // firebase-tools.ts
-var firebaseConfig = {};
-var app = initializeApp(firebaseConfig);
-var storage = getStorage();
-var storageRef = ref(storage);
-var vaultRef = ref(storageRef, "vaults");
-var provider = new GoogleAuthProvider();
-var auth = getAuth(app);
-signInWithPopup(auth, provider).then((result) => {
-  const credential = GoogleAuthProvider.credentialFromResult(result);
-  if (credential == null ? void 0 : credential.accessToken) {
-    const token = credential.accessToken;
-  }
-  const user = result.user;
-}).catch((error) => {
-  const errorCode = error.code;
-  const errorMessage = error.message;
-  const email = error.customData.email;
-  const credential = GoogleAuthProvider.credentialFromError(error);
-});
+var app;
+var storage;
+var storageRef;
+var vaultRef;
+var auth;
+function setupFirebase(config) {
+  const existingApps = getApps();
+  app = existingApps.length > 0 ? existingApps[0] : initializeApp(config);
+  storage = getStorage(app);
+  storageRef = ref(storage);
+  vaultRef = ref(storageRef, "vaults");
+  auth = getAuth(app);
+}
 
 // datatools.ts
 var FlintDataTransfer = class {
@@ -10638,11 +10667,17 @@ var FlintDataTransfer = class {
 
 // flint-settings.ts
 var import_obsidian2 = require("obsidian");
-var import_obsidian3 = require("obsidian");
 var DEFAULT_SETTINGS = {
-  remoteConnectedVault: "default"
+  remoteConnectedVault: "default",
+  userEmail: "",
+  firebaseApiKey: "",
+  firebaseAuthDomain: "",
+  firebaseStorageBucket: "",
+  firebaseProjectId: "",
+  firebaseMessagingSenderId: "",
+  firebaseAppId: ""
 };
-var _FlintSettingsTab_instances, fetchVaultOptions_fn;
+var _FlintSettingsTab_instances, fetchVaultOptions_fn, isConfigured_fn, buildConfig_fn;
 var FlintSettingsTab = class extends import_obsidian2.PluginSettingTab {
   constructor(app2, plugin) {
     super(app2, plugin);
@@ -10651,15 +10686,97 @@ var FlintSettingsTab = class extends import_obsidian2.PluginSettingTab {
   }
   async display() {
     const { containerEl } = this;
-    const allVaultOptions = await __privateMethod(this, _FlintSettingsTab_instances, fetchVaultOptions_fn).call(this);
     containerEl.empty();
+    if (!__privateMethod(this, _FlintSettingsTab_instances, isConfigured_fn).call(this)) {
+      containerEl.createEl("h3", { text: "Firebase Configuration" });
+      containerEl.createEl("p", {
+        text: "Enter your Firebase project credentials. Find these in Firebase Console \u2192 Project Settings \u2192 Your apps \u2192 SDK setup.",
+        cls: "setting-item-description"
+      });
+      const cfg = this.plugin.settings;
+      const fields = [
+        { label: "API Key", key: "firebaseApiKey", placeholder: "AIzaSy..." },
+        { label: "Auth Domain", key: "firebaseAuthDomain", placeholder: "your-project.firebaseapp.com" },
+        { label: "Storage Bucket", key: "firebaseStorageBucket", placeholder: "your-project.appspot.com" },
+        { label: "Project ID", key: "firebaseProjectId", placeholder: "your-project" },
+        { label: "Messaging Sender ID", key: "firebaseMessagingSenderId", placeholder: "123456789" },
+        { label: "App ID", key: "firebaseAppId", placeholder: "1:123..." }
+      ];
+      for (const field of fields) {
+        new import_obsidian2.Setting(containerEl).setName(field.label).addText((text) => text.setPlaceholder(field.placeholder).setValue(cfg[field.key]).onChange((val) => {
+          this.plugin.settings[field.key] = val.trim();
+        }));
+      }
+      new import_obsidian2.Setting(containerEl).addButton((btn) => btn.setButtonText("Save Configuration").setCta().onClick(async () => {
+        await this.plugin.saveSettings();
+        if (__privateMethod(this, _FlintSettingsTab_instances, isConfigured_fn).call(this)) {
+          setupFirebase(__privateMethod(this, _FlintSettingsTab_instances, buildConfig_fn).call(this));
+        }
+        this.display();
+      }));
+      return;
+    }
+    if (!this.plugin.settings.userEmail) {
+      new import_obsidian2.Setting(containerEl).setName("Firebase Configuration").setDesc(`Project: ${this.plugin.settings.firebaseProjectId}`).addButton((btn) => btn.setButtonText("Change").onClick(async () => {
+        this.plugin.settings.firebaseApiKey = "";
+        await this.plugin.saveSettings();
+        this.display();
+      }));
+      containerEl.createEl("h3", { text: "Firebase Account" });
+      let emailInput = "";
+      let passwordInput = "";
+      new import_obsidian2.Setting(containerEl).setName("Email").addText((text) => text.setPlaceholder("you@example.com").onChange((val) => {
+        emailInput = val.trim();
+      }));
+      new import_obsidian2.Setting(containerEl).setName("Password").addText((text) => {
+        text.setPlaceholder("\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022").onChange((val) => {
+          passwordInput = val;
+        });
+        text.inputEl.type = "password";
+      });
+      const errorEl = containerEl.createEl("p", { cls: "setting-item-description mod-warning" });
+      new import_obsidian2.Setting(containerEl).addButton((btn) => btn.setButtonText("Sign in").setCta().onClick(async () => {
+        var _a, _b;
+        if (!auth) return;
+        errorEl.setText("");
+        try {
+          const result = await signInWithEmailAndPassword(auth, emailInput, passwordInput);
+          this.plugin.settings.userEmail = (_a = result.user.email) != null ? _a : "";
+          await this.plugin.saveSettings();
+          this.display();
+        } catch (e) {
+          errorEl.setText((_b = e.message) != null ? _b : "Sign-in failed");
+        }
+      })).addButton((btn) => btn.setButtonText("Create account").onClick(async () => {
+        var _a, _b;
+        if (!auth) return;
+        errorEl.setText("");
+        try {
+          const result = await createUserWithEmailAndPassword(auth, emailInput, passwordInput);
+          this.plugin.settings.userEmail = (_a = result.user.email) != null ? _a : "";
+          await this.plugin.saveSettings();
+          this.display();
+        } catch (e) {
+          errorEl.setText((_b = e.message) != null ? _b : "Account creation failed");
+        }
+      }));
+      return;
+    }
+    new import_obsidian2.Setting(containerEl).setName("Firebase Account").setDesc(this.plugin.settings.userEmail).addButton((btn) => btn.setButtonText("Sign out").onClick(async () => {
+      if (auth) await signOut(auth);
+      this.plugin.settings.userEmail = "";
+      await this.plugin.saveSettings();
+      this.display();
+    }));
+    const allVaultOptions = await __privateMethod(this, _FlintSettingsTab_instances, fetchVaultOptions_fn).call(this);
     new import_obsidian2.Setting(containerEl).setName("Current Connected Remote Vault").setDesc("Active Firebase Vault").addDropdown((options) => options.addOptions(allVaultOptions).onChange(async (name5) => {
-      this.plugin.setRemoteDesintation(name5);
+      this.plugin.setRemoteDestination(name5);
     }));
   }
 };
 _FlintSettingsTab_instances = new WeakSet();
 fetchVaultOptions_fn = async function() {
+  if (!vaultRef) return {};
   const vaultList = await listAll(vaultRef);
   let ALL_FIREBASE_VAULTS = {};
   for (let i = 0; i < vaultList.prefixes.length; i++) {
@@ -10670,27 +10787,65 @@ fetchVaultOptions_fn = async function() {
   }
   return ALL_FIREBASE_VAULTS;
 };
+isConfigured_fn = function() {
+  const s = this.plugin.settings;
+  return s.firebaseApiKey && s.firebaseAuthDomain && s.firebaseStorageBucket && s.firebaseProjectId;
+};
+buildConfig_fn = function() {
+  const s = this.plugin.settings;
+  return {
+    apiKey: s.firebaseApiKey,
+    authDomain: s.firebaseAuthDomain,
+    storageBucket: s.firebaseStorageBucket,
+    projectId: s.firebaseProjectId,
+    messagingSenderId: s.firebaseMessagingSenderId,
+    appId: s.firebaseAppId
+  };
+};
 
 // main.ts
 var currentVaultName = "vaults";
 var remoteVaultName = "";
-var FlintPlugin = class extends import_obsidian4.Plugin {
+var FlintPlugin = class extends import_obsidian3.Plugin {
   async onload() {
     await this.loadSettings();
     currentVaultName = await this.app.vault.getName();
     remoteVaultName = this.settings.remoteConnectedVault;
     this.dataTools = new FlintDataTransfer(this);
+    if (this.settings.firebaseApiKey) {
+      setupFirebase({
+        apiKey: this.settings.firebaseApiKey,
+        authDomain: this.settings.firebaseAuthDomain,
+        storageBucket: this.settings.firebaseStorageBucket,
+        projectId: this.settings.firebaseProjectId,
+        messagingSenderId: this.settings.firebaseMessagingSenderId,
+        appId: this.settings.firebaseAppId
+      });
+      onAuthStateChanged(auth, async (user) => {
+        var _a;
+        this.settings.userEmail = user ? (_a = user.email) != null ? _a : "" : "";
+        await this.saveSettings();
+      });
+    }
     const uploadRibbon = this.addRibbonIcon("upload", "Upload Files", (evt) => {
-      new import_obsidian4.Notice("Attempting Upload");
+      if (!this.settings.userEmail) {
+        new import_obsidian3.Notice("Please sign in first (Flint Settings)");
+        return;
+      }
+      new import_obsidian3.Notice("Attempting Upload");
       this.dataTools.forceUploadFiles(this.app.vault, this.settings);
     });
     uploadRibbon.addClass("flint-upload-ribbon-class");
     const downloadRibbon = this.addRibbonIcon("download", "Download Files", (evt) => {
+      if (!this.settings.userEmail) {
+        new import_obsidian3.Notice("Please sign in first (Flint Settings)");
+        return;
+      }
       if (remoteVaultName !== "") {
-        new import_obsidian4.Notice("Downloadin!");
+        new import_obsidian3.Notice("Downloadin!");
         this.dataTools.importVault(currentVaultName, remoteVaultName);
       } else {
-        new import_obsidian4.Notice("Please select target cloud vault!");
+        new import_obsidian3.Notice("Please select target cloud vault!");
       }
     });
     downloadRibbon.addClass("flint-download-ribbon-class");
@@ -10698,59 +10853,29 @@ var FlintPlugin = class extends import_obsidian4.Plugin {
     if (this.settings.remoteConnectedVault !== "default") {
       this.statusBar.setText(`Flint Remote Set to ${this.settings.remoteConnectedVault}`);
     } else {
-      this.statusBar.setText(`Flint Remote Not Set`);
+      this.statusBar.setText("Flint Remote Not Set");
     }
-    this.addCommand({
-      id: "sample-editor-command",
-      name: "Sample editor command",
-      editorCallback: (editor, view) => {
-        console.log(editor.getSelection());
-        editor.replaceSelection("Sample Editor Command");
-      }
-    });
-    this.addCommand({
-      id: "open-sample-modal-complex",
-      name: "Open sample modal (complex)",
-      checkCallback: (checking) => {
-        const markdownView = this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView);
-        if (markdownView) {
-          if (!checking) {
-          }
-          return true;
-        }
-      }
-    });
     this.addCommand({
       id: "import-cloud-vault",
       name: "Import Vault from Cloud",
       callback: () => {
+        if (!this.settings.userEmail) {
+          new import_obsidian3.Notice("Please sign in first (Flint Settings)");
+          return;
+        }
         const selectionModal = new CloudVaultSelectModal(this.app, this.statusBar, this, this.settings);
         selectionModal.open();
       }
     });
     this.addSettingTab(new FlintSettingsTab(this.app, this));
-    this.registerDomEvent(document, "click", (evt) => {
-      console.log("click", evt);
-    });
-    this.registerInterval(window.setInterval(() => console.log("setInterval"), 5 * 60 * 1e3));
   }
-  async setRemoteDesintation(remoteName) {
+  async setRemoteDestination(remoteName) {
     remoteVaultName = remoteName;
     this.settings.remoteConnectedVault = remoteName;
     this.statusBar.setText(`Flint Remote Set to ${remoteName}`);
-    new import_obsidian4.Notice(`Syncing to ${remoteName}`);
+    new import_obsidian3.Notice(`Syncing to ${remoteName}`);
     await this.saveSettings();
   }
-  // async activateView() {
-  // 	this.app.workspace.detachLeavesOfType(VIEW_TYPE_EXAMPLE);
-  // 	await this.app.workspace.getRightLeaf(false).setViewState({
-  // 		type: VIEW_TYPE_EXAMPLE,
-  // 		active: true,
-  // 	});
-  // 	this.app.workspace.revealLeaf(
-  // 		this.app.workspace.getLeavesOfType(VIEW_TYPE_EXAMPLE)[0]
-  // 	);
-  // }
   onunload() {
   }
   async loadSettings() {
@@ -10761,8 +10886,9 @@ var FlintPlugin = class extends import_obsidian4.Plugin {
   }
 };
 async function fetchFirebaseVaults() {
+  if (!vaultRef) return [];
   const vaultList = await listAll(vaultRef);
-  let ALL_FIREBASE_VAULTS = [];
+  const ALL_FIREBASE_VAULTS = [];
   for (let i = 0; i < vaultList.prefixes.length; i++) {
     const vaultName = `${vaultList.prefixes[i]}`.split("/").pop();
     if (vaultName) {
@@ -10771,7 +10897,7 @@ async function fetchFirebaseVaults() {
   }
   return ALL_FIREBASE_VAULTS;
 }
-var CloudVaultSelectModal = class extends import_obsidian4.SuggestModal {
+var CloudVaultSelectModal = class extends import_obsidian3.SuggestModal {
   constructor(app2, HTMLbar, plugin, settings) {
     super(app2);
     this.app = app2;
@@ -10782,22 +10908,20 @@ var CloudVaultSelectModal = class extends import_obsidian4.SuggestModal {
   async getSuggestions(query) {
     const RETRIEVED_FIREBASE_VAULTS = await fetchFirebaseVaults();
     if (RETRIEVED_FIREBASE_VAULTS.length <= 0) {
-      new import_obsidian4.Notice("NO VAULTS PRESENT");
+      new import_obsidian3.Notice("NO VAULTS PRESENT");
     }
     return RETRIEVED_FIREBASE_VAULTS.filter(
       (vault) => vault.title.toLowerCase().includes(query.toLowerCase())
     );
   }
-  // Renders each suggestion item.
   renderSuggestion(vault, el) {
     el.createEl("div", { text: vault.title });
     el.createEl("small", { text: vault.ref });
   }
-  // Perform action on the selected suggestion.
   async onChooseSuggestion(vault, evt) {
-    new import_obsidian4.Notice(`Selected ${vault.title}`);
+    new import_obsidian3.Notice(`Selected ${vault.title}`);
     remoteVaultName = vault.title;
-    this.plugin.setRemoteDesintation(vault.title);
+    this.plugin.setRemoteDestination(vault.title);
   }
 };
 /*! Bundled license information:
@@ -10939,39 +11063,39 @@ var CloudVaultSelectModal = class extends import_obsidian4.SuggestModal {
    *)
 
 @firebase/util/dist/index.esm2017.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
+@firebase/auth/dist/esm2017/index-35c79a8a.js:
 firebase/app/dist/esm/index.esm.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
-@firebase/auth/dist/esm2017/index-35c79a8a.js:
   (**
    * @license
    * Copyright 2020 Google LLC

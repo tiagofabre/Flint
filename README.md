@@ -2,54 +2,70 @@
 Unofficial Obsidian - Firebase vault sync plugin. Store your obsidian files on your own custom Firebase storage bucket for complete control over your cloud files! This plugin was made for those who want to solely manage their own data across their obsidian devices.
 
 ## Features
-- Upload/Download data to your Firebase storage bucket with the upload icon & download.
+- Upload/Download data to your Firebase storage bucket with the upload and download ribbon icons.
 - Support for access to multiple remote vaults on one device.
+- Firebase Authentication — sign in with email/password to secure your data.
+- Storage rules enforced: only authenticated users can read and write.
 - Android/Mobile compatibility.
 
 ## Setup
 
 **Install Procedure:**
-1) Allow community plugins within the Obsidian app
-2) Create a folder titled "plugins" under the YOURVAULTNAME/.obsidian/ directory.
-3) Paste the extracted Flint plugins folder within the YOURVAULTNAME/.obsidian/plugins directory
-4) Enable the plugin under the community plugin tab in Obsidian.
+1. Allow community plugins within the Obsidian app.
+2. Create a folder titled `plugins` under `YOURVAULTNAME/.obsidian/`.
+3. Paste the extracted Flint plugin folder inside `YOURVAULTNAME/.obsidian/plugins/`.
+4. Enable the plugin under the Community Plugins tab in Obsidian.
 
-**Setup Procedure:** <br>
+**Firebase Project Setup:**
+1. Create a new Firebase project at [console.firebase.google.com](https://console.firebase.google.com).
+2. Register a **Web App** in your project (Project Settings → Your apps → Add app).
+3. Enable **Firebase Storage** (Storage → Get Started). Choose a region and start in production mode.
+4. Enable **Email/Password** authentication (Authentication → Sign-in method → Email/Password → Enable).
+5. Set your Storage rules to require authentication:
+   ```
+   allow read, write: if request.auth != null;
+   ```
+6. Configure CORS on your bucket to allow requests from Obsidian (`app://obsidian.md`). Create a `cors.json` file:
+   ```json
+   [
+     {
+       "origin": ["app://obsidian.md"],
+       "method": ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"],
+       "responseHeader": ["Content-Type", "Authorization", "Content-Length", "X-Requested-With"],
+       "maxAgeSeconds": 3600
+     }
+   ]
+   ```
+   Then apply it with: `gsutil cors set cors.json gs://YOUR-BUCKET-NAME`
+7. Create an empty folder named `vaults` in your storage bucket root. Any sub-folders inside `vaults` will be accessible remote vaults.
 
-_If you would like me to handle your cloud notes setup:_ <br>
-1) Reach out and I can help you set this up by giving you access to my Firebase config file!
-2) Paste the config data into **_firebase-tools.ts_** script under the **_flint_** plugin folder.
-3) You're all set!
+**Plugin Configuration (in Obsidian):**
 
-_If you plan on completely managing your notes yourself via Firebase:_
-1) Create a new Firebase Project with the free Spark Plan
-2) Create a WebApp and paste the **_firebase config_** data into a section labeled within the **_firebase-tools.ts_** script under the **_flint_** plugin folder.
-3) Select storage under your project and set up your preferred security rules (just choose the test option if you just want it to work for now).
-4) Create an empty folder in the root bucket named "**_vaults_**". Any children folders created inside "**_vaults_**" will be your accessible remote vaults via the plugin.
-5) You're all set!
+1. Open **Settings → Flint**.
+2. Enter your Firebase project credentials (found in Project Settings → SDK setup → Config) and click **Save Configuration**.
+3. Enter your email and password and click **Sign in** (or **Create account** for first-time setup).
+4. Select your remote vault from the dropdown.
 
 ## App Info
-- The app works across devices but you will need to install the plugin on each device independently
-- Local vault names can be anything you would like as vault data is tied to the Firebase vault names instead.
-- Use the Download and Upload icons on the lefthand ribbon taskbar (PC) to get and set local changes to the remote vault (These are essentially equivalent to force pushes and pulls). On mobile, they can be accessed through the bottom right pull-up box (three lines).
- 
+- The plugin must be installed independently on each device.
+- Local vault names can be anything — vault data is tied to the Firebase vault names.
+- Use the **Upload** and **Download** icons on the left ribbon (PC) to push and pull changes. On mobile, access them from the bottom-right pull-up menu.
+- Upload and download are force operations (equivalent to force push/pull) — they replace the remote or local vault entirely.
+
 ![Screenshot 2023-08-26 212644](https://github.com/Andrewyx/Flint/assets/72371419/cf252aea-57c0-4cd3-868f-bbaf933246c8)
 
-You must connect to a remote vault before you can use the plugin. This can be done either in the Flint plugin settings menu or you can bind a hotkey to "Import Flint Vault from Cloud" to quickly swap between target remote vaults.
+You must connect to a remote vault before using the plugin. This can be done in the Flint settings menu or by binding a hotkey to "Import Flint Vault from Cloud".
 
 ![Screenshot 2023-08-26 132612](https://github.com/Andrewyx/Flint/assets/72371419/79374c28-bedb-48d2-8d57-fadc3ab82bd3)
 
-## Troubleshooting <br>
-Since this is a prototype project, there are quite a few bugs that I am aware of already but here are a few solutions to some problems if you run into them.
-- "NO REMOTE VAULT" Notice: This means that you or I have not configured the Firebase storage directory properly and the plugin can not see available vaults. Remember, the directory should look something like root-->vaults-->YOURREMOTEVAULTNAME.
-- If you are experiencing denied access to the Firebase storage, take a look at your Firebase storage bucket rules and make sure you are allowing external reads and writes to the bucket.
-- There is no plugins folder: If this is your first obsidian plugin, you will have to create a plugins folder under the .obsidian folder of your vault! Also, make sure you have enabled community plugins in your obsidian settings as well! 
-If you discover any bugs, please let me know and I will try to get back to you as soon as possible.
+## Troubleshooting
+- **"NO REMOTE VAULT" notice**: The `vaults` directory in your Firebase storage bucket is missing or empty. Make sure the structure is `root → vaults → YOURREMOTEVAULTNAME`.
+- **CORS errors in console**: Apply the CORS config to your bucket (see step 6 in setup above).
+- **Sign-in fails with `auth/configuration-not-found`**: Email/Password auth provider is not enabled in the Firebase Console (Authentication → Sign-in method).
+- **No plugins folder**: Create a `plugins` folder under `.obsidian/` in your vault and make sure Community Plugins are enabled in Obsidian settings.
 
-## Roadmap/WIP
-- Autogenerated buckets: I would like to streamline the custom setup process as right now it requires the user to have a knowledge base of using Firebase buckets and directory structures. This would allow for easier multi-user collaboration.
-- Security: I am currently working on adding user Auth to make the data transfers more secure.
-- Changelogs: ie. Instead of force push and pulls, allow for merges and similar version control abilities. My plan is to implement the Google diff-match-patch API
-- Autosync: Pretty self-explanatory but a method of autosaving vaults with the ability to revert in a timeline.
-- I am also figuring out a way to generate the whole Firebase vault remote directories automatically (possible with an initialization popup in the plugin upon first start).
-- I am aware that the code is not completely clean and there are bits of unused code still drifting around. I will clean those up in a future update.
+## Roadmap
+- Autogenerated buckets: Streamline setup so users don't need to manually configure Firebase directories.
+- Changelogs: Replace force push/pull with merge-based sync using the Google diff-match-patch API.
+- Autosync: Automatic vault saving with timeline revert capability.
+- Code cleanup: Remove remaining unused/sample code from the initial plugin scaffold.
