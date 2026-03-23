@@ -38,6 +38,7 @@ export interface FlintPluginSettings {
 	syncOnFileChange: boolean;
 	scheduledSyncEnabled: boolean;
 	scheduledSyncIntervalMinutes: number;
+	firstSyncDone: boolean;
 }
 
 export const DEFAULT_SETTINGS: FlintPluginSettings = {
@@ -54,6 +55,7 @@ export const DEFAULT_SETTINGS: FlintPluginSettings = {
 	syncOnFileChange: true,
 	scheduledSyncEnabled: false,
 	scheduledSyncIntervalMinutes: 5,
+	firstSyncDone: false,
 }
 
 type TabId = 'general' | 'vaults' | 'sync';

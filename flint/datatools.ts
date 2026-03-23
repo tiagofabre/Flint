@@ -1,4 +1,4 @@
-import { Notice, TFile, TFolder, Vault } from 'obsidian';
+import { Modal, Notice, TFile, TFolder, Vault } from 'obsidian';
 import {
 	StorageReference,
 	getDownloadURL,
@@ -137,6 +137,38 @@ export class FlintDataTransfer {
 		await this.plugin.saveData({ ...data, syncState: state });
 	}
 
+	// ── Mass-deletion guard ───────────────────────────────────────────────────
+
+	private confirmMassDeletion(count: number, total: number): Promise<'proceed' | 'keep' | 'cancel'> {
+		return new Promise(resolve => {
+			const modal = new Modal(this.plugin.app);
+			modal.titleEl.setText('Flint: Large remote deletion detected');
+			modal.contentEl.createEl('p', {
+				text: `This sync would delete ${count} of ${total} remote file${count === 1 ? '' : 's'} — ` +
+				      `because they are missing locally but were previously synced from this device.`,
+			});
+			modal.contentEl.createEl('p', {
+				text: 'This can happen if you set up Flint on a new device without using "Take remote" on first sync.',
+				cls: 'setting-item-description',
+			});
+
+			const btnRow = modal.contentEl.createDiv();
+			btnRow.style.cssText = 'display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;';
+
+			const btn = (label: string, result: 'proceed' | 'keep' | 'cancel', cta = false) => {
+				const el = btnRow.createEl('button', { text: label });
+				if (cta) el.classList.add('mod-cta');
+				el.addEventListener('click', () => { modal.close(); resolve(result); });
+			};
+
+			btn('Keep remote files (download them)', 'keep', true);
+			btn('Delete them anyway', 'proceed');
+			btn('Cancel sync', 'cancel');
+
+			modal.open();
+		});
+	}
+
 	// ── Main sync entry point ─────────────────────────────────────────────────
 
 	async syncAll(vault: Vault, settings: FlintPluginSettings): Promise<void> {
@@ -184,6 +216,28 @@ export class FlintDataTransfer {
 		const localFiles = vault.getMarkdownFiles();
 		const localMap = new Map(localFiles.map(f => [f.path, f]));
 		const universe = new Set([...localMap.keys(), ...remoteMdSet]);
+
+		// 4a. Pre-scan: detect planned remote deletions before touching anything
+		const plannedDeletions = [...remoteMdSet].filter(
+			p => !localMap.has(p) && !!syncState[p]
+		);
+		const isDangerous =
+			plannedDeletions.length > 0 &&
+			(plannedDeletions.length === remoteMdSet.size ||
+			 plannedDeletions.length > 5 ||
+			 plannedDeletions.length / remoteMdSet.size >= 0.5);
+
+		if (isDangerous) {
+			const answer = await this.confirmMassDeletion(plannedDeletions.length, remoteMdSet.size);
+			if (answer === 'cancel') {
+				new Notice('Sync cancelled.');
+				return;
+			}
+			if (answer === 'keep') {
+				// Treat those files as never-synced so they get downloaded instead of deleted
+				for (const p of plannedDeletions) delete syncState[p];
+			}
+		}
 
 		let synced = 0, skipped = 0, errors = 0;
 
@@ -462,9 +516,30 @@ export class FlintDataTransfer {
 		}
 	}
 
+	/** Merge for first-time setup: clears syncState so no file is mistaken for an intentional deletion. */
+	async safeFirstSync(vault: Vault, settings: FlintPluginSettings): Promise<void> {
+		await this.saveSyncState({});
+		await this.syncAll(vault, settings);
+	}
+
 	async forcePush(vault: Vault, settings: FlintPluginSettings): Promise<void> {
 		await this.clearRemoteVault(settings);
 		await this.saveSyncState({});
+		await this.syncAll(vault, settings);
+	}
+
+	async forcePull(vault: Vault, settings: FlintPluginSettings): Promise<void> {
+		if (!settings.remoteConnectedVault || !vaultRef) return;
+
+		// Delete all local .md files
+		for (const file of vault.getMarkdownFiles()) {
+			await vault.delete(file);
+		}
+
+		// Clear local .am cache and sync state so every remote file looks new
+		await this.saveSyncState({});
+
+		// syncAll will now see every remote file as new and download it
 		await this.syncAll(vault, settings);
 	}
 
