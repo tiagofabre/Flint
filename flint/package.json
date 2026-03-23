@@ -1,6 +1,6 @@
 {
 	"name": "flint-plugin",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"description": "Sync your Obsidian vault across devices using Firebase Storage with CRDT-based conflict resolution.",
 	"main": "main.js",
 	"scripts": {
