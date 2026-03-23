@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownView, Notice, Plugin, SuggestModal, TAbstractFile, TFile, debounce } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, SuggestModal, TAbstractFile, TFile, debounce } from 'obsidian';
 import { ListResult, listAll } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
 import { FlintDataTransfer } from 'datatools';
@@ -60,7 +60,11 @@ export default class FlintPlugin extends Plugin {
 				if (user) {
 					this.settings.userEmail = user.email ?? '';
 					setUserVaultRef(user.uid);
-					if (this.settings.syncOnStartup) this.dataTools.syncAll(this.app.vault, this.settings);
+					if (!this.settings.firstSyncDone) {
+						new FirstSyncModal(this.app, this).open();
+					} else if (this.settings.syncOnStartup) {
+						this.dataTools.syncAll(this.app.vault, this.settings);
+					}
 					this.setupScheduledSync();
 				} else {
 					this.settings.userEmail = '';
@@ -133,12 +137,30 @@ export default class FlintPlugin extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: 'force-pull',
+			name: 'Force Pull (overwrite local with remote)',
+			callback: () => {
+				if (!this.settings.userEmail) {
+					new Notice('Please sign in first (Flint Settings)');
+					return;
+				}
+				new Notice('Force Pull: deleting local files and downloading from remote…');
+				this.dataTools.forcePull(this.app.vault, this.settings).then(() => {
+					new Notice('Force Pull complete');
+				}).catch((err) => {
+					new Notice(`Force Pull failed: ${err}`);
+				});
+			}
+		});
+
 		this.addSettingTab(new FlintSettingsTab(this.app, this));
 	}
 
 	async setRemoteDestination(remoteName: string) {
 		remoteVaultName = remoteName;
 		this.settings.remoteConnectedVault = remoteName;
+		this.settings.firstSyncDone = false;
 		this.statusBar.setText(`Flint Remote Set to ${remoteName}`);
 		new Notice(`Syncing to ${remoteName}`);
 		await this.saveSettings();
@@ -173,6 +195,66 @@ async function fetchFirebaseVaults(): Promise<FirebaseVault[]> {
 		}
 	}
 	return ALL_FIREBASE_VAULTS;
+}
+
+export class FirstSyncModal extends Modal {
+	plugin: FlintPlugin;
+
+	constructor(app: App, plugin: FlintPlugin) {
+		super(app);
+		this.plugin = plugin;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl('h2', { text: 'Welcome to Flint' });
+		contentEl.createEl('p', { text: 'This looks like the first time Flint is running on this device. How would you like to start?' });
+
+		const makeButton = (label: string, desc: string, onClick: () => void) => {
+			const wrap = contentEl.createDiv({ cls: 'flint-first-sync-option' });
+			wrap.style.cssText = 'margin: 12px 0; padding: 12px; border: 1px solid var(--background-modifier-border); border-radius: 6px; cursor: pointer;';
+			wrap.createEl('strong', { text: label });
+			wrap.createEl('p', { text: desc, cls: 'setting-item-description' });
+			wrap.addEventListener('click', onClick);
+		};
+
+		makeButton(
+			'Merge local and remote',
+			'Upload new local files and download new remote files. Nothing is deleted. Best choice when both sides have unique content.',
+			async () => {
+				this.close();
+				await this.plugin.dataTools.safeFirstSync(this.plugin.app.vault, this.plugin.settings);
+				this.plugin.settings.firstSyncDone = true;
+				await this.plugin.saveSettings();
+			}
+		);
+
+		makeButton(
+			'Take remote (replace local)',
+			'Delete all local notes and replace them with the remote vault. Use this when setting up a new device.',
+			async () => {
+				this.close();
+				await this.plugin.dataTools.forcePull(this.plugin.app.vault, this.plugin.settings);
+				this.plugin.settings.firstSyncDone = true;
+				await this.plugin.saveSettings();
+			}
+		);
+
+		makeButton(
+			'Take local (replace remote)',
+			'Upload all local notes and overwrite the remote vault. Use this when the remote state is outdated.',
+			async () => {
+				this.close();
+				await this.plugin.dataTools.forcePush(this.plugin.app.vault, this.plugin.settings);
+				this.plugin.settings.firstSyncDone = true;
+				await this.plugin.saveSettings();
+			}
+		);
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
 }
 
 export class CloudVaultSelectModal extends SuggestModal<FirebaseVault> {
