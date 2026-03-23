@@ -31,6 +31,6 @@ jobs:
           gh release create "$tag" \
             --title "$tag" \
             --notes "" \
-            flint/main.js \
+            flint/dist/main.js \
             flint/manifest.json \
             flint/versions.json
