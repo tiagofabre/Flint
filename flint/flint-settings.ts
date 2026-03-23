@@ -1,5 +1,17 @@
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import { App, Modal, PluginSettingTab, Setting } from 'obsidian';
 import FlintPlugin from 'main';
+
+function friendlyAuthError(e: any): string {
+	const code: string = e?.code ?? '';
+	if (code.includes('invalid-email')) return 'Invalid email address.';
+	if (code.includes('user-not-found') || code.includes('wrong-password') || code.includes('invalid-credential')) return 'Invalid email or password.';
+	if (code.includes('email-already-in-use')) return 'An account with this email already exists.';
+	if (code.includes('weak-password')) return 'Password is too weak (minimum 6 characters).';
+	if (code.includes('too-many-requests')) return 'Too many attempts. Please try again later.';
+	if (code.includes('network-request-failed')) return 'Network error. Check your connection.';
+	if (code.includes('configuration-not-found')) return 'Email/password sign-in is not enabled in Firebase.';
+	return 'Authentication failed.';
+}
 import { vaultRef, auth, setupFirebase, FirebaseConfig } from 'firebase-tools';
 import { ListResult, listAll } from 'firebase/storage';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
@@ -69,6 +81,61 @@ function buildFirebaseConfig(s: FlintPluginSettings): FirebaseConfig {
 
 function isFirebaseConfigured(s: FlintPluginSettings): boolean {
 	return !!(s.firebaseApiKey && s.firebaseAuthDomain && s.firebaseStorageBucket && s.firebaseProjectId);
+}
+
+// ── Confirmation modal ─────────────────────────────────────────────────────
+
+class ConfirmModal extends Modal {
+	private message: string;
+	private onConfirm: () => Promise<void>;
+
+	constructor(app: App, message: string, onConfirm: () => Promise<void>) {
+		super(app);
+		this.message = message;
+		this.onConfirm = onConfirm;
+	}
+
+	onOpen() {
+		this.render();
+	}
+
+	private render() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl('p', { text: this.message });
+		new Setting(contentEl)
+			.addButton(btn => btn
+				.setButtonText('Cancel')
+				.onClick(() => this.close()))
+			.addButton(btn => btn
+				.setButtonText('Delete')
+				.setWarning()
+				.onClick(() => this.confirm()));
+	}
+
+	private async confirm() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl('p', { text: 'Deleting…' });
+
+		try {
+			await this.onConfirm();
+			contentEl.empty();
+			contentEl.createEl('p', { text: 'Vault deleted.' });
+			setTimeout(() => this.close(), 1200);
+		} catch (e: any) {
+			contentEl.empty();
+			contentEl.createEl('p', { text: `Error: ${e?.message ?? 'Delete failed.'}`, cls: 'mod-warning' });
+			new Setting(contentEl)
+				.addButton(btn => btn
+					.setButtonText('Close')
+					.onClick(() => this.close()));
+		}
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
 }
 
 // ── Settings tab ───────────────────────────────────────────────────────────
@@ -212,7 +279,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 							await this.plugin.saveSettings();
 							this.display();
 						} catch (e: any) {
-							errorEl.setText(e.message ?? 'Sign-in failed');
+							errorEl.setText(friendlyAuthError(e));
 						}
 					}))
 				.addButton(btn => btn
@@ -226,7 +293,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 							await this.plugin.saveSettings();
 							this.display();
 						} catch (e: any) {
-							errorEl.setText(e.message ?? 'Account creation failed');
+							errorEl.setText(friendlyAuthError(e));
 						}
 					}));
 			return;
@@ -273,20 +340,39 @@ export class FlintSettingsTab extends PluginSettingTab {
 			return;
 		}
 
+		const localVaultName = this.plugin.app.vault.getName();
+		const remoteVault = this.plugin.settings.remoteConnectedVault;
+		const isInitialized = vaultNames.includes(remoteVault);
+
+		// ── Initialize prompt ─────────────────────────────────────────────────
+		if (!isInitialized) {
+			const targetName = remoteVault === 'default' ? localVaultName : remoteVault;
+			new Setting(containerEl)
+				.setName(`Initialize "${targetName}"`)
+				.setDesc('This vault has not been pushed to Firebase yet.')
+				.addButton(btn => btn
+					.setButtonText('Initialize')
+					.setCta()
+					.onClick(async () => {
+						await this.plugin.setRemoteDestination(targetName);
+						await this.plugin.dataTools.syncAll(this.plugin.app.vault, this.plugin.settings);
+						this.display();
+					}));
+			return;
+		}
+
+		// ── Active vault ──────────────────────────────────────────────────────
 		new Setting(containerEl)
 			.setName('Active vault')
 			.setDesc('Vault to sync with')
 			.addDropdown(drop => {
 				for (const name of vaultNames) drop.addOption(name, name);
-				drop.setValue(this.plugin.settings.remoteConnectedVault);
+				drop.setValue(remoteVault);
 				drop.onChange(async (name) => { await this.plugin.setRemoteDestination(name); });
 			});
 
+		// ── Remote vaults list ────────────────────────────────────────────────
 		containerEl.createEl('h3', { text: 'Remote vaults' });
-
-		if (vaultNames.length === 0) {
-			containerEl.createEl('p', { text: 'No remote vaults yet. Create one below.', cls: 'setting-item-description' });
-		}
 
 		for (const vaultName of vaultNames) {
 			new Setting(containerEl)
@@ -294,31 +380,20 @@ export class FlintSettingsTab extends PluginSettingTab {
 				.addButton(btn => btn
 					.setButtonText('Delete')
 					.setWarning()
-					.onClick(async () => {
-						await this.plugin.dataTools.deleteVault(vaultName);
-						if (this.plugin.settings.remoteConnectedVault === vaultName) {
-							await this.plugin.setRemoteDestination('default');
-						}
-						this.display();
+					.onClick(() => {
+						new ConfirmModal(
+							this.plugin.app,
+							`Delete "${vaultName}" from Firebase? This cannot be undone.`,
+							async () => {
+								await this.plugin.dataTools.deleteVault(vaultName);
+								if (this.plugin.settings.remoteConnectedVault === vaultName) {
+									await this.plugin.setRemoteDestination('default');
+								}
+								this.display();
+							}
+						).open();
 					}));
 		}
-
-		containerEl.createEl('h3', { text: 'New vault' });
-
-		let newVaultName = '';
-		new Setting(containerEl)
-			.setName('Name')
-			.addText(text => text
-				.setPlaceholder('vault-name')
-				.onChange(val => { newVaultName = val.trim(); }))
-			.addButton(btn => btn
-				.setButtonText('Create')
-				.setCta()
-				.onClick(async () => {
-					if (!newVaultName) return;
-					await this.plugin.setRemoteDestination(newVaultName);
-					this.display();
-				}));
 	}
 
 	// ── Sync tab ─────────────────────────────────────────────────────────────
@@ -330,8 +405,44 @@ export class FlintSettingsTab extends PluginSettingTab {
 		}
 
 		new Setting(containerEl)
+			.setName('Force sync')
+			.setDesc('Clear the remote vault and re-upload everything from this device.')
+			.addButton(btn => btn
+				.setButtonText('Force Sync')
+				.setWarning()
+				.onClick(() => {
+					new ConfirmModal(
+						this.plugin.app,
+						'This will overwrite the entire remote vault with your local files. Continue?',
+						async () => {
+							await this.plugin.dataTools.forcePush(this.plugin.app.vault, this.plugin.settings);
+						}
+					).open();
+				}));
+
+		new Setting(containerEl)
+			.setName('Sync on startup')
+			.setDesc('Sync automatically when Obsidian opens or you sign in.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.syncOnStartup)
+				.onChange(async (val) => {
+					this.plugin.settings.syncOnStartup = val;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Sync on file change')
+			.setDesc('Sync 5 seconds after a note is created, modified, or deleted.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.syncOnFileChange)
+				.onChange(async (val) => {
+					this.plugin.settings.syncOnFileChange = val;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
 			.setName('Scheduled sync')
-			.setDesc('Automatically sync at a fixed interval')
+			.setDesc('Sync automatically at a fixed interval.')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.scheduledSyncEnabled)
 				.onChange(async (val) => {
@@ -344,7 +455,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 		if (this.plugin.settings.scheduledSyncEnabled) {
 			new Setting(containerEl)
 				.setName('Sync interval')
-				.setDesc('Minutes between automatic syncs')
+				.setDesc('Minutes between scheduled syncs.')
 				.addText(text => text
 					.setValue(String(this.plugin.settings.scheduledSyncIntervalMinutes))
 					.onChange(async (val) => {

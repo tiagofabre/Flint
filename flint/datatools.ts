@@ -91,6 +91,14 @@ export class FlintDataTransfer {
 		return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 	}
 
+	// ── Path validation ───────────────────────────────────────────────────────
+
+	/** Returns true only for safe vault-relative paths (no traversal, no absolute paths). */
+	private isSafeRelPath(relPath: string): boolean {
+		if (!relPath || relPath.startsWith('/')) return false;
+		return !relPath.split('/').some(part => part === '..' || part === '.');
+	}
+
 	// ── Local .am storage (.obsidian/plugins/flint/am/<relPath>.am) ───────────
 
 	private amLocalPath(relPath: string): string {
@@ -107,6 +115,9 @@ export class FlintDataTransfer {
 	}
 
 	private async writeLocalAm(relPath: string, bytes: Uint8Array): Promise<void> {
+		if (!this.isSafeRelPath(relPath)) {
+			throw new Error(`Unsafe path rejected for local .am write: ${relPath}`);
+		}
 		const path = this.amLocalPath(relPath);
 		const dir = path.substring(0, path.lastIndexOf('/'));
 		const adapter = this.plugin.app.vault.adapter;
@@ -295,6 +306,10 @@ export class FlintDataTransfer {
 
 	/** New file — exists remotely only */
 	private async syncNewRemote(relPath: string, ctx: SyncCtx): Promise<void> {
+		if (!this.isSafeRelPath(relPath)) {
+			throw new Error(`Unsafe remote path rejected: ${relPath}`);
+		}
+
 		const mdRef = this.sRef(`${ctx.base}/${relPath}`);
 		const amRef = this.sRef(`${ctx.base}/${relPath}.am`);
 
@@ -343,7 +358,9 @@ export class FlintDataTransfer {
 		ctx: SyncCtx,
 	): Promise<void> {
 		const existingAmBytes = await this.readLocalAm(relPath);
-		let doc = existingAmBytes ? loadDoc(existingAmBytes) : createDoc(content);
+		let doc;
+		try { doc = existingAmBytes ? loadDoc(existingAmBytes) : createDoc(content); }
+		catch { doc = createDoc(content); }
 		doc = updateDoc(doc, content);
 		const amBytes = saveDoc(doc);
 
@@ -397,7 +414,9 @@ export class FlintDataTransfer {
 		]);
 
 		const remoteDoc = loadDoc(remoteAmBytes);
-		let localDoc = existingAmBytes ? loadDoc(existingAmBytes) : createDoc(content);
+		let localDoc;
+		try { localDoc = existingAmBytes ? loadDoc(existingAmBytes) : createDoc(content); }
+		catch { localDoc = createDoc(content); }
 		localDoc = updateDoc(localDoc, content);
 
 		const { doc: merged, text: mergedText } = mergeDocs(localDoc, remoteDoc);
