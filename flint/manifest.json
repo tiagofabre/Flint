@@ -1,7 +1,7 @@
 {
 	"id": "flint",
 	"name": "Flint",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"minAppVersion": "0.15.0",
 	"description": "Sync your vault across devices using Firebase Storage with CRDT-based conflict resolution.",
 	"author": "Tiago Fabre, Andrew Mao",

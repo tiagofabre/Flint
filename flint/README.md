@@ -2,6 +2,10 @@
 
 **Flint** is an Obsidian plugin that syncs your vault across devices using [Firebase Storage](https://firebase.google.com/products/storage) as the backend. It uses [Automerge](https://automerge.org/) CRDTs for conflict-free merging when multiple devices edit the same note simultaneously.
 
+> **Requirements & Disclosures**
+> - **A Firebase account and project is required.** Flint does not provide any hosted service — you bring your own Firebase project (free tier is sufficient).
+> - **Network access:** Flint connects to [Firebase Storage](https://firebase.google.com/products/storage) (to store and retrieve your notes) and [Firebase Authentication](https://firebase.google.com/products/auth) (to authenticate you to your own bucket). No data is sent to any server other than your own Firebase project.
+
 ---
 
 ## Features

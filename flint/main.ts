@@ -123,34 +123,40 @@ export default class FlintPlugin extends Plugin {
 		this.addCommand({
 			id: 'force-push',
 			name: 'Force Push (overwrite remote)',
-			callback: () => {
-				if (!this.settings.userEmail) {
-					new Notice('Please sign in first (Flint Settings)');
-					return;
+			checkCallback: (checking: boolean) => {
+				if (!this.settings.userEmail) return false;
+				if (!checking) {
+					new Notice('Force Push: clearing remote and re-uploading everything…');
+					(async () => {
+						try {
+							await this.dataTools.forcePush(this.app.vault, this.settings);
+							new Notice('Force Push complete');
+						} catch (err) {
+							new Notice(`Force Push failed: ${err}`);
+						}
+					})();
 				}
-				new Notice('Force Push: clearing remote and re-uploading everything…');
-				this.dataTools.forcePush(this.app.vault, this.settings).then(() => {
-					new Notice('Force Push complete');
-				}).catch((err) => {
-					new Notice(`Force Push failed: ${err}`);
-				});
+				return true;
 			}
 		});
 
 		this.addCommand({
 			id: 'force-pull',
 			name: 'Force Pull (overwrite local with remote)',
-			callback: () => {
-				if (!this.settings.userEmail) {
-					new Notice('Please sign in first (Flint Settings)');
-					return;
+			checkCallback: (checking: boolean) => {
+				if (!this.settings.userEmail) return false;
+				if (!checking) {
+					new Notice('Force Pull: deleting local files and downloading from remote…');
+					(async () => {
+						try {
+							await this.dataTools.forcePull(this.app.vault, this.settings);
+							new Notice('Force Pull complete');
+						} catch (err) {
+							new Notice(`Force Pull failed: ${err}`);
+						}
+					})();
 				}
-				new Notice('Force Pull: deleting local files and downloading from remote…');
-				this.dataTools.forcePull(this.app.vault, this.settings).then(() => {
-					new Notice('Force Pull complete');
-				}).catch((err) => {
-					new Notice(`Force Pull failed: ${err}`);
-				});
+				return true;
 			}
 		});
 
@@ -166,7 +172,12 @@ export default class FlintPlugin extends Plugin {
 		await this.saveSettings();
 	}
 
-	onunload() {}
+	onunload() {
+		if (this.scheduledSyncHandle !== null) {
+			window.clearInterval(this.scheduledSyncHandle);
+			this.scheduledSyncHandle = null;
+		}
+	}
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -212,7 +223,6 @@ export class FirstSyncModal extends Modal {
 
 		const makeButton = (label: string, desc: string, onClick: () => void) => {
 			const wrap = contentEl.createDiv({ cls: 'flint-first-sync-option' });
-			wrap.style.cssText = 'margin: 12px 0; padding: 12px; border: 1px solid var(--background-modifier-border); border-radius: 6px; cursor: pointer;';
 			wrap.createEl('strong', { text: label });
 			wrap.createEl('p', { text: desc, cls: 'setting-item-description' });
 			wrap.addEventListener('click', onClick);
