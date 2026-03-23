@@ -178,15 +178,10 @@ export class FlintSettingsTab extends PluginSettingTab {
 		];
 
 		const bar = containerEl.createDiv({ cls: 'flint-tab-bar' });
-		bar.style.cssText = 'display:flex; gap:4px; margin-bottom:16px; border-bottom:1px solid var(--background-modifier-border); padding-bottom:8px;';
 
 		for (const tab of tabs) {
-			const btn = bar.createEl('button', { text: tab.label });
-			btn.style.cssText = 'padding:4px 12px; border-radius:4px; border:none; cursor:pointer; background:none; color:var(--text-muted);';
-			if (tab.id === this.activeTab) {
-				btn.style.background = 'var(--interactive-accent)';
-				btn.style.color = 'var(--text-on-accent)';
-			}
+			const btn = bar.createEl('button', { text: tab.label, cls: 'flint-tab-btn' });
+			if (tab.id === this.activeTab) btn.addClass('flint-tab-btn--active');
 			btn.onclick = () => { this.activeTab = tab.id; this.display(); };
 		}
 	}
@@ -196,7 +191,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 	private renderGeneral(containerEl: HTMLElement, isConfigured: boolean, isSignedIn: boolean, vaultNames: string[]) {
 		// Step 1: Firebase config
 		if (!isConfigured) {
-			containerEl.createEl('h3', { text: 'Firebase Configuration' });
+			new Setting(containerEl).setName('Firebase configuration').setHeading();
 			containerEl.createEl('p', {
 				text: 'Enter your Firebase project credentials. Find these in Firebase Console → Project Settings → Your apps → SDK setup.',
 				cls: 'setting-item-description',
@@ -248,7 +243,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 						this.display();
 					}));
 
-			containerEl.createEl('h3', { text: 'Firebase Account' });
+			new Setting(containerEl).setName('Firebase account').setHeading();
 
 			let emailInput = '';
 			let passwordInput = '';
@@ -374,7 +369,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 			});
 
 		// ── Remote vaults list ────────────────────────────────────────────────
-		containerEl.createEl('h3', { text: 'Remote vaults' });
+		new Setting(containerEl).setName('Remote vaults').setHeading();
 
 		for (const vaultName of vaultNames) {
 			new Setting(containerEl)

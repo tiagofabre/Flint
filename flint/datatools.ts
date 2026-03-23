@@ -152,8 +152,7 @@ export class FlintDataTransfer {
 				cls: 'setting-item-description',
 			});
 
-			const btnRow = modal.contentEl.createDiv();
-			btnRow.style.cssText = 'display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;';
+			const btnRow = modal.contentEl.createDiv({ cls: 'flint-modal-btn-row' });
 
 			const btn = (label: string, result: 'proceed' | 'keep' | 'cancel', cta = false) => {
 				const el = btnRow.createEl('button', { text: label });
