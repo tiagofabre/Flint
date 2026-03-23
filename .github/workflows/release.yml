@@ -20,7 +20,7 @@ jobs:
       - name: Build plugin
         run: |
           cd flint
-          npm ci
+          npm ci --legacy-peer-deps
           npm run build
 
       - name: Create release
