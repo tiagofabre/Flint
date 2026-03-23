@@ -1,7 +1,7 @@
 {
 	"id": "flint",
 	"name": "Flint",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"minAppVersion": "0.15.0",
 	"description": "Sync your Obsidian vault across devices using Firebase Storage with CRDT-based conflict resolution.",
 	"author": "Tiago Fabre, Andrew Mao",
