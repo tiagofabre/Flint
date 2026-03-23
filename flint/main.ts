@@ -15,7 +15,7 @@ export default class FlintPlugin extends Plugin {
 	dataTools: FlintDataTransfer;
 
 	private readonly debouncedSync = debounce(() => {
-		if (!this.settings.userEmail) return;
+		if (!this.settings.userEmail || !this.settings.syncOnFileChange) return;
 		this.dataTools.syncAll(this.app.vault, this.settings);
 	}, 5000, true);
 
@@ -60,7 +60,7 @@ export default class FlintPlugin extends Plugin {
 				if (user) {
 					this.settings.userEmail = user.email ?? '';
 					setUserVaultRef(user.uid);
-					this.debouncedSync(); // sync on startup / sign-in
+					if (this.settings.syncOnStartup) this.dataTools.syncAll(this.app.vault, this.settings);
 					this.setupScheduledSync();
 				} else {
 					this.settings.userEmail = '';
