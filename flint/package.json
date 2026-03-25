@@ -1,6 +1,6 @@
 {
 	"name": "flint-plugin",
-	"version": "1.0.4",
+	"version": "1.0.5",
 	"description": "Sync your Obsidian vault across devices using Firebase Storage with CRDT-based conflict resolution.",
 	"main": "main.js",
 	"scripts": {
@@ -21,7 +21,7 @@
 		"@typescript-eslint/eslint-plugin": "5.29.0",
 		"@typescript-eslint/parser": "5.29.0",
 		"@typescript-eslint/utils": "^8.57.2",
-"esbuild": "^0.27.0",
+		"esbuild": "^0.27.0",
 		"eslint": "^9.39.4",
 		"eslint-plugin-obsidianmd": "^0.1.9",
 		"obsidian": "latest",
