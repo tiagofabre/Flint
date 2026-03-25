@@ -1,8 +1,9 @@
-import { App, Modal, PluginSettingTab, Setting } from 'obsidian';
+import { App, ButtonComponent, Modal, PluginSettingTab, Setting, setIcon } from 'obsidian';
 import FlintPlugin from 'main';
 
-function friendlyAuthError(e: any): string {
-	const code: string = e?.code ?? '';
+function friendlyAuthError(e: unknown): string {
+	if (e instanceof Error && e.message.toLowerCase().includes('timed out')) return e.message;
+	const code: string = (e as { code?: string })?.code ?? '';
 	if (code.includes('invalid-email')) return 'Invalid email address.';
 	if (code.includes('user-not-found') || code.includes('wrong-password') || code.includes('invalid-credential')) return 'Invalid email or password.';
 	if (code.includes('email-already-in-use')) return 'An account with this email already exists.';
@@ -12,7 +13,7 @@ function friendlyAuthError(e: any): string {
 	if (code.includes('configuration-not-found')) return 'Email/password sign-in is not enabled in Firebase.';
 	return 'Authentication failed.';
 }
-import { vaultRef, auth, setupFirebase, FirebaseConfig } from 'firebase-tools';
+import { vaultRef, auth, setupFirebase, FirebaseConfig, withTimeout } from 'firebase-tools';
 import { ListResult, listAll } from 'firebase/storage';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 
@@ -60,13 +61,28 @@ export const DEFAULT_SETTINGS: FlintPluginSettings = {
 
 type TabId = 'general' | 'vaults' | 'sync';
 
+// ── Button loading helper ───────────────────────────────────────────────────
+
+function setButtonLoading(btn: ButtonComponent, loading: boolean, label: string): void {
+	btn.setDisabled(loading);
+	if (loading) {
+		btn.buttonEl.empty();
+		setIcon(btn.buttonEl, 'loader');
+		btn.buttonEl.addClass('flint-btn-loading');
+	} else {
+		btn.buttonEl.empty();
+		btn.buttonEl.removeClass('flint-btn-loading');
+		btn.setButtonText(label);
+	}
+}
+
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
 async function fetchVaultNames(): Promise<string[]> {
 	if (!vaultRef) return [];
-	const vaultList: ListResult = await listAll(vaultRef);
+	const vaultList: ListResult = await withTimeout(listAll(vaultRef), 10_000, 'Fetching vault list');
 	return vaultList.prefixes
-		.map(r => `${r}`.split('/').pop())
+		.map(r => r.fullPath.split('/').pop())
 		.filter((n): n is string => !!n);
 }
 
@@ -112,7 +128,7 @@ class ConfirmModal extends Modal {
 			.addButton(btn => btn
 				.setButtonText('Delete')
 				.setWarning()
-				.onClick(() => this.confirm()));
+				.onClick(() => { void this.confirm(); }));
 	}
 
 	private async confirm() {
@@ -125,9 +141,9 @@ class ConfirmModal extends Modal {
 			contentEl.empty();
 			contentEl.createEl('p', { text: 'Vault deleted.' });
 			setTimeout(() => this.close(), 1200);
-		} catch (e: any) {
+		} catch (e: unknown) {
 			contentEl.empty();
-			contentEl.createEl('p', { text: `Error: ${e?.message ?? 'Delete failed.'}`, cls: 'mod-warning' });
+			contentEl.createEl('p', { text: `Error: ${e instanceof Error ? e.message : 'Delete failed.'}`, cls: 'mod-warning' });
 			new Setting(contentEl)
 				.addButton(btn => btn
 					.setButtonText('Close')
@@ -153,7 +169,11 @@ export class FlintSettingsTab extends PluginSettingTab {
 
 	// Fetch all async data upfront, then clear+render synchronously to avoid
 	// race conditions when display() is called multiple times in quick succession.
-	async display(): Promise<void> {
+	display(): void {
+		void this._display();
+	}
+
+	private async _display(): Promise<void> {
 		const isConfigured = isFirebaseConfigured(this.plugin.settings);
 		const isSignedIn = !!this.plugin.settings.userEmail;
 		const vaultNames = (isConfigured && isSignedIn) ? await fetchVaultNames() : [];
@@ -193,6 +213,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 		if (!isConfigured) {
 			new Setting(containerEl).setName('Firebase configuration').setHeading();
 			containerEl.createEl('p', {
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				text: 'Enter your Firebase project credentials. Find these in Firebase Console → Project Settings → Your apps → SDK setup.',
 				cls: 'setting-item-description',
 			});
@@ -218,30 +239,37 @@ export class FlintSettingsTab extends PluginSettingTab {
 
 			new Setting(containerEl)
 				.addButton(btn => btn
-					.setButtonText('Save Configuration')
+					.setButtonText('Save configuration')
 					.setCta()
-					.onClick(async () => {
-						await this.plugin.saveSettings();
-						if (isFirebaseConfigured(this.plugin.settings)) {
-							setupFirebase(buildFirebaseConfig(this.plugin.settings));
+					.onClick(() => { void (async () => {
+						setButtonLoading(btn, true, 'Save configuration');
+						try {
+							await this.plugin.saveSettings();
+							if (isFirebaseConfigured(this.plugin.settings)) {
+								setupFirebase(buildFirebaseConfig(this.plugin.settings));
+							}
+							this.display();
+						} catch (e: unknown) {
+							void this.plugin.logError('Save configuration', e);
+							setButtonLoading(btn, false, 'Save configuration');
 						}
-						this.display();
-					}));
+					})(); }));
 			return;
 		}
 
 		// Step 2: Sign in
 		if (!isSignedIn) {
 			new Setting(containerEl)
-				.setName('Firebase Configuration')
+				.setName('Firebase configuration')
 				.setDesc(`Project: ${this.plugin.settings.firebaseProjectId}`)
 				.addButton(btn => btn
 					.setButtonText('Change')
-					.onClick(async () => {
+					.onClick(() => { void (async () => {
+						setButtonLoading(btn, true, 'Change');
 						this.plugin.settings.firebaseApiKey = '';
 						await this.plugin.saveSettings();
 						this.display();
-					}));
+					})(); }));
 
 			new Setting(containerEl).setName('Firebase account').setHeading();
 
@@ -251,6 +279,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 			new Setting(containerEl)
 				.setName('Email')
 				.addText(text => text
+					// eslint-disable-next-line obsidianmd/ui/sentence-case
 					.setPlaceholder('you@example.com')
 					.onChange(val => { emailInput = val.trim(); }));
 
@@ -267,32 +296,38 @@ export class FlintSettingsTab extends PluginSettingTab {
 				.addButton(btn => btn
 					.setButtonText('Sign in')
 					.setCta()
-					.onClick(async () => {
+					.onClick(() => { void (async () => {
 						if (!auth) return;
 						errorEl.setText('');
+						setButtonLoading(btn, true, 'Sign in');
 						try {
-							const result = await signInWithEmailAndPassword(auth, emailInput, passwordInput);
+							const result = await withTimeout(signInWithEmailAndPassword(auth, emailInput, passwordInput), 10_000, 'Sign in');
 							this.plugin.settings.userEmail = result.user.email ?? '';
 							await this.plugin.saveSettings();
 							this.display();
-						} catch (e: any) {
+						} catch (e: unknown) {
 							errorEl.setText(friendlyAuthError(e));
+							void this.plugin.logError('Sign in', e);
+							setButtonLoading(btn, false, 'Sign in');
 						}
-					}))
+					})(); }))
 				.addButton(btn => btn
 					.setButtonText('Create account')
-					.onClick(async () => {
+					.onClick(() => { void (async () => {
 						if (!auth) return;
 						errorEl.setText('');
+						setButtonLoading(btn, true, 'Create account');
 						try {
-							const result = await createUserWithEmailAndPassword(auth, emailInput, passwordInput);
+							const result = await withTimeout(createUserWithEmailAndPassword(auth, emailInput, passwordInput), 10_000, 'Create account');
 							this.plugin.settings.userEmail = result.user.email ?? '';
 							await this.plugin.saveSettings();
 							this.display();
-						} catch (e: any) {
+						} catch (e: unknown) {
 							errorEl.setText(friendlyAuthError(e));
+							void this.plugin.logError('Create account', e);
+							setButtonLoading(btn, false, 'Create account');
 						}
-					}));
+					})(); }));
 			return;
 		}
 
@@ -302,12 +337,18 @@ export class FlintSettingsTab extends PluginSettingTab {
 			.setDesc(this.plugin.settings.userEmail)
 			.addButton(btn => btn
 				.setButtonText('Sign out')
-				.onClick(async () => {
-					if (auth) await signOut(auth);
-					this.plugin.settings.userEmail = '';
-					await this.plugin.saveSettings();
-					this.display();
-				}));
+				.onClick(() => { void (async () => {
+					setButtonLoading(btn, true, 'Sign out');
+					try {
+						if (auth) await withTimeout(signOut(auth), 10_000, 'Sign out');
+						this.plugin.settings.userEmail = '';
+						await this.plugin.saveSettings();
+						this.display();
+					} catch (e: unknown) {
+						void this.plugin.logError('Sign out', e);
+						setButtonLoading(btn, false, 'Sign out');
+					}
+				})(); }));
 
 		const noVaultSelected = this.plugin.settings.remoteConnectedVault === 'default'
 			|| !vaultNames.includes(this.plugin.settings.remoteConnectedVault);
@@ -315,9 +356,10 @@ export class FlintSettingsTab extends PluginSettingTab {
 		if (noVaultSelected) {
 			new Setting(containerEl)
 				.setName('Vault not initialized')
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				.setDesc('Go to the Vaults tab to initialize your vault on Firebase.')
 				.addButton(btn => btn
-					.setButtonText('Go to Vaults')
+					.setButtonText('Go to vaults')
 					.setCta()
 					.onClick(() => { this.activeTab = 'vaults'; this.display(); }));
 			return;
@@ -326,6 +368,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName('Device ID')
 			.setDesc(this.plugin.settings.deviceId || '(not yet assigned)')
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			.setTooltip('Stable identifier for this device, used by the CRDT sync engine');
 	}
 
@@ -333,6 +376,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 
 	private renderVaults(containerEl: HTMLElement, isSignedIn: boolean, vaultNames: string[]) {
 		if (!isSignedIn) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			containerEl.createEl('p', { text: 'Sign in first via the General tab.', cls: 'setting-item-description' });
 			return;
 		}
@@ -346,15 +390,22 @@ export class FlintSettingsTab extends PluginSettingTab {
 			const targetName = remoteVault === 'default' ? localVaultName : remoteVault;
 			new Setting(containerEl)
 				.setName(`Initialize "${targetName}"`)
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				.setDesc('This vault has not been pushed to Firebase yet.')
 				.addButton(btn => btn
 					.setButtonText('Initialize')
 					.setCta()
-					.onClick(async () => {
-						await this.plugin.setRemoteDestination(targetName);
-						await this.plugin.dataTools.syncAll(this.plugin.app.vault, this.plugin.settings);
-						this.display();
-					}));
+					.onClick(() => { void (async () => {
+						setButtonLoading(btn, true, 'Initialize');
+						try {
+							await this.plugin.setRemoteDestination(targetName);
+							await this.plugin.runSync();
+							this.display();
+						} catch (e: unknown) {
+							void this.plugin.logError('Initialize vault', e);
+							setButtonLoading(btn, false, 'Initialize');
+						}
+					})(); }));
 			return;
 		}
 
@@ -365,7 +416,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 			.addDropdown(drop => {
 				for (const name of vaultNames) drop.addOption(name, name);
 				drop.setValue(remoteVault);
-				drop.onChange(async (name) => { await this.plugin.setRemoteDestination(name); });
+				drop.onChange((name) => { void (async () => { await this.plugin.setRemoteDestination(name); })(); });
 			});
 
 		// ── Remote vaults list ────────────────────────────────────────────────
@@ -397,6 +448,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 
 	private renderSync(containerEl: HTMLElement, isSignedIn: boolean) {
 		if (!isSignedIn) {
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			containerEl.createEl('p', { text: 'Sign in first via the General tab.', cls: 'setting-item-description' });
 			return;
 		}
@@ -405,7 +457,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 			.setName('Force sync')
 			.setDesc('Clear the remote vault and re-upload everything from this device.')
 			.addButton(btn => btn
-				.setButtonText('Force Sync')
+				.setButtonText('Force sync')
 				.setWarning()
 				.onClick(() => {
 					new ConfirmModal(
@@ -422,32 +474,32 @@ export class FlintSettingsTab extends PluginSettingTab {
 			.setDesc('Sync automatically when Obsidian opens or you sign in.')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.syncOnStartup)
-				.onChange(async (val) => {
+				.onChange((val) => { void (async () => {
 					this.plugin.settings.syncOnStartup = val;
 					await this.plugin.saveSettings();
-				}));
+				})(); }));
 
 		new Setting(containerEl)
 			.setName('Sync on file change')
 			.setDesc('Sync 5 seconds after a note is created, modified, or deleted.')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.syncOnFileChange)
-				.onChange(async (val) => {
+				.onChange((val) => { void (async () => {
 					this.plugin.settings.syncOnFileChange = val;
 					await this.plugin.saveSettings();
-				}));
+				})(); }));
 
 		new Setting(containerEl)
 			.setName('Scheduled sync')
 			.setDesc('Sync automatically at a fixed interval.')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.scheduledSyncEnabled)
-				.onChange(async (val) => {
+				.onChange((val) => { void (async () => {
 					this.plugin.settings.scheduledSyncEnabled = val;
 					await this.plugin.saveSettings();
 					this.plugin.setupScheduledSync();
 					this.display();
-				}));
+				})(); }));
 
 		if (this.plugin.settings.scheduledSyncEnabled) {
 			new Setting(containerEl)
@@ -455,14 +507,14 @@ export class FlintSettingsTab extends PluginSettingTab {
 				.setDesc('Minutes between scheduled syncs.')
 				.addText(text => text
 					.setValue(String(this.plugin.settings.scheduledSyncIntervalMinutes))
-					.onChange(async (val) => {
+					.onChange((val) => { void (async () => {
 						const n = parseInt(val);
 						if (!isNaN(n) && n > 0) {
 							this.plugin.settings.scheduledSyncIntervalMinutes = n;
 							await this.plugin.saveSettings();
 							this.plugin.setupScheduledSync();
 						}
-					}));
+					})(); }));
 		}
 	}
 }

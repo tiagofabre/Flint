@@ -3,6 +3,8 @@ import * as Automerge from "@automerge/automerge/slim";
 // @ts-ignore
 import { automergeWasmBase64 } from "@automerge/automerge/automerge.wasm.base64.js";
 
+/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
+
 export interface FlintDoc {
 	text: string;
 }
@@ -11,9 +13,9 @@ let _initPromise: Promise<void> | null = null;
 
 export function initAutomerge(): Promise<void> {
 	if (!_initPromise) {
-		_initPromise = (Automerge as any).initializeBase64Wasm(automergeWasmBase64) as Promise<void>;
+		_initPromise = (Automerge as { initializeBase64Wasm: (b64: string) => Promise<void> }).initializeBase64Wasm(automergeWasmBase64);
 	}
-	return _initPromise as Promise<void>;
+	return _initPromise;
 }
 
 export function createDoc(text: string): Automerge.Doc<FlintDoc> {

@@ -34,7 +34,6 @@ vi.mock('firebase/storage', () => ({
 
 vi.mock('firebase-tools', () => ({
 	vaultRef: { fullPath: 'vaults' },
-	storage: {},
 }));
 
 vi.mock('main', () => ({
@@ -134,7 +133,7 @@ describe('sync dispatch table', () => {
 	it('local only → syncNewLocal', async () => {
 		const ctx = makeCtx();
 		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, false, ctx
+			'note.md', makeFakeFile(), false, ctx
 		);
 
 		expect(result).toBe('synced');
@@ -151,7 +150,7 @@ describe('sync dispatch table', () => {
 	it('remote only → syncNewRemote', async () => {
 		const ctx = makeCtx();
 		const result = await (dt as any).processFile(
-			'note.md', undefined, false, true, ctx
+			'note.md', undefined, true, ctx
 		);
 
 		expect(result).toBe('synced');
@@ -173,7 +172,7 @@ describe('sync dispatch table', () => {
 		});
 
 		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, true, ctx
+			'note.md', makeFakeFile(), true, ctx
 		);
 
 		expect(result).toBe('skipped');
@@ -195,7 +194,7 @@ describe('sync dispatch table', () => {
 		});
 
 		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, true, ctx
+			'note.md', makeFakeFile(), true, ctx
 		);
 
 		expect(result).toBe('synced');
@@ -218,7 +217,7 @@ describe('sync dispatch table', () => {
 		});
 
 		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, true, ctx
+			'note.md', makeFakeFile(), true, ctx
 		);
 
 		expect(result).toBe('synced');
@@ -238,7 +237,7 @@ describe('sync dispatch table', () => {
 		});
 
 		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, true, ctx
+			'note.md', makeFakeFile(), true, ctx
 		);
 
 		expect(result).toBe('synced');
@@ -260,7 +259,7 @@ describe('sync dispatch table', () => {
 		});
 
 		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, true, ctx
+			'note.md', makeFakeFile(), true, ctx
 		);
 
 		expect(result).toBe('synced');
