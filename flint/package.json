@@ -10,7 +10,10 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"lint": "eslint .",
-		"version": "node version-bump.mjs && git add manifest.json versions.json"
+		"version": "node version-bump.mjs && git add manifest.json versions.json",
+		"release": "node release.mjs",
+		"release:minor": "node release.mjs minor",
+		"release:major": "node release.mjs major"
 	},
 	"keywords": [],
 	"author": "Tiago Fabre, Andrew Mao",
