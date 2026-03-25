@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import { Modal, Notice, TFile, TFolder, Vault } from 'obsidian';
 import {
 	StorageReference,
@@ -9,7 +10,7 @@ import {
 	deleteObject,
 } from 'firebase/storage';
 import FlintPlugin from 'main';
-import { storage, vaultRef } from 'firebase-tools';
+import { vaultRef, withTimeout } from 'firebase-tools';
 import { FlintPluginSettings, FileSyncState, SyncState } from 'flint-settings';
 import {
 	createDoc,
@@ -47,12 +48,20 @@ export class FlintDataTransfer {
 	}
 
 	private async fetchBytes(r: StorageReference): Promise<Uint8Array> {
-		const url = await getDownloadURL(r);
+		const url = await withTimeout(getDownloadURL(r), 10_000, `Getting URL for ${r.name}`);
 		const buf = await new Promise<ArrayBuffer>((resolve, reject) => {
 			const xhr = new XMLHttpRequest();
 			xhr.responseType = 'arraybuffer';
-			xhr.onload = () => resolve(xhr.response);
+			xhr.timeout = 10_000;
+			xhr.onload = () => {
+				if (xhr.status >= 200 && xhr.status < 300) {
+					resolve(xhr.response as ArrayBuffer);
+				} else {
+					reject(new Error(`HTTP ${xhr.status} fetching ${r.fullPath}`));
+				}
+			};
 			xhr.onerror = () => reject(new Error('XHR error'));
+			xhr.ontimeout = () => reject(new Error(`Download timed out after 10s`));
 			xhr.open('GET', url);
 			xhr.send();
 		});
@@ -64,17 +73,21 @@ export class FlintDataTransfer {
 	}
 
 	private async uploadText(r: StorageReference, text: string): Promise<void> {
-		await uploadBytesResumable(r, new TextEncoder().encode(text));
+		await this.uploadBytes(r, new TextEncoder().encode(text));
 	}
 
 	private async uploadBytes(r: StorageReference, bytes: Uint8Array): Promise<void> {
-		await uploadBytesResumable(r, bytes);
+		await withTimeout(
+			new Promise<void>((resolve, reject) => { uploadBytesResumable(r, bytes).then(() => resolve(), reject); }),
+			10_000,
+			`Uploading ${r.name}`,
+		);
 	}
 
 	private async collectPaths(list: ListResult, acc: string[] = []): Promise<string[]> {
 		for (const item of list.items) acc.push(item.fullPath);
 		for (const prefix of list.prefixes) {
-			await this.collectPaths(await listAll(prefix), acc);
+			await this.collectPaths(await withTimeout(listAll(prefix), 10_000, 'Listing remote files'), acc);
 		}
 		return acc;
 	}
@@ -87,7 +100,7 @@ export class FlintDataTransfer {
 	}
 
 	private async sha256Bytes(bytes: Uint8Array): Promise<string> {
-		const buf = await crypto.subtle.digest('SHA-256', bytes);
+		const buf = await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>);
 		return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 	}
 
@@ -128,12 +141,12 @@ export class FlintDataTransfer {
 	// ── Sync state persistence ────────────────────────────────────────────────
 
 	private async loadSyncState(): Promise<SyncState> {
-		const data = (await this.plugin.loadData()) ?? {};
-		return data.syncState ?? {};
+		const data = (await this.plugin.loadData() as Record<string, unknown>) ?? {};
+		return (data.syncState ?? {}) as SyncState;
 	}
 
 	private async saveSyncState(state: SyncState): Promise<void> {
-		const data = (await this.plugin.loadData()) ?? {};
+		const data = (await this.plugin.loadData() as Record<string, unknown>) ?? {};
 		await this.plugin.saveData({ ...data, syncState: state });
 	}
 
@@ -142,12 +155,13 @@ export class FlintDataTransfer {
 	private confirmMassDeletion(count: number, total: number): Promise<'proceed' | 'keep' | 'cancel'> {
 		return new Promise(resolve => {
 			const modal = new Modal(this.plugin.app);
-			modal.titleEl.setText('Flint: Large remote deletion detected');
+			modal.titleEl.setText('Flint: large remote deletion detected');
 			modal.contentEl.createEl('p', {
 				text: `This sync would delete ${count} of ${total} remote file${count === 1 ? '' : 's'} — ` +
 				      `because they are missing locally but were previously synced from this device.`,
 			});
 			modal.contentEl.createEl('p', {
+				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				text: 'This can happen if you set up Flint on a new device without using "Take remote" on first sync.',
 				cls: 'setting-item-description',
 			});
@@ -186,7 +200,7 @@ export class FlintDataTransfer {
 		const prefix = this.sRef(base).fullPath + '/';
 
 		// 1. One listAll → all remote paths (no per-file metadata calls)
-		const allRemotePaths = await this.collectPaths(await listAll(this.sRef(base)));
+		const allRemotePaths = await this.collectPaths(await withTimeout(listAll(this.sRef(base)), 10_000, 'Listing remote vault'));
 
 		const remoteAmSet = new Set(allRemotePaths.filter(p => p.endsWith('.md.am')));
 		const remoteMdSet = new Set(
@@ -202,7 +216,7 @@ export class FlintDataTransfer {
 			try {
 				remoteManifest = JSON.parse(
 					await this.fetchText(this.sRef(`${base}/flint-manifest.json`))
-				);
+				) as RemoteManifest;
 			} catch { /* corrupted manifest — start fresh */ }
 		}
 
@@ -242,7 +256,6 @@ export class FlintDataTransfer {
 
 		for (const relPath of universe) {
 			const localFile = localMap.get(relPath);
-			const isLocal = !!localFile;
 			const isRemote = remoteMdSet.has(relPath);
 			const hasRemoteAm = remoteAmSet.has(`${prefix}${relPath}.am`);
 
@@ -254,10 +267,11 @@ export class FlintDataTransfer {
 			};
 
 			try {
-				const result = await this.processFile(relPath, localFile, isLocal, isRemote, ctx);
-				result === 'skipped' ? skipped++ : synced++;
+				const result = await this.processFile(relPath, localFile, isRemote, ctx);
+				if (result === 'skipped') skipped++; else synced++;
 			} catch (err) {
 				console.error(`[Flint] ${relPath}:`, err);
+				void this.plugin.logError(`Syncing ${relPath}`, err);
 				errors++;
 			}
 		}
@@ -287,17 +301,16 @@ export class FlintDataTransfer {
 	private async processFile(
 		relPath: string,
 		localFile: TFile | undefined,
-		isLocal: boolean,
 		isRemote: boolean,
 		ctx: SyncCtx,
 	): Promise<'synced' | 'skipped'> {
 
-		if (isLocal && !isRemote) {
-			await this.syncNewLocal(relPath, localFile!, ctx);
+		if (localFile && !isRemote) {
+			await this.syncNewLocal(relPath, localFile, ctx);
 			return 'synced';
 		}
 
-		if (!isLocal && isRemote) {
+		if (!localFile && isRemote) {
 			if (ctx.state) {
 				// Previously synced — local deletion is intentional, remove from remote
 				await this.syncDeletedLocal(relPath, ctx);
@@ -309,7 +322,8 @@ export class FlintDataTransfer {
 		}
 
 		// File exists on both sides — check what changed
-		const content = await ctx.vault.read(localFile!);
+		if (!localFile) return 'skipped';
+		const content = await ctx.vault.read(localFile);
 		const localHash = await this.sha256(content);
 		const localChanged = !ctx.state || localHash !== ctx.state.localHash;
 
@@ -320,11 +334,11 @@ export class FlintDataTransfer {
 		if (!localChanged && !remoteChanged) return 'skipped';
 
 		if (localChanged && !remoteChanged) {
-			await this.syncLocalChanged(relPath, localFile!, content, localHash, ctx);
+			await this.syncLocalChanged(relPath, localFile, content, localHash, ctx);
 		} else if (!localChanged && remoteChanged) {
-			await this.syncRemoteChanged(relPath, localFile!, ctx);
+			await this.syncRemoteChanged(relPath, localFile, ctx);
 		} else {
-			await this.syncBothChanged(relPath, localFile!, content, ctx);
+			await this.syncBothChanged(relPath, localFile, content, ctx);
 		}
 
 		return 'synced';
@@ -395,8 +409,8 @@ export class FlintDataTransfer {
 	/** File deleted locally — remove from remote */
 	private async syncDeletedLocal(relPath: string, ctx: SyncCtx): Promise<void> {
 		await Promise.all([
-			deleteObject(this.sRef(`${ctx.base}/${relPath}`)).catch(() => {}),
-			deleteObject(this.sRef(`${ctx.base}/${relPath}.am`)).catch(() => {}),
+			withTimeout(deleteObject(this.sRef(`${ctx.base}/${relPath}`)), 10_000, `Deleting ${relPath}`).catch(() => {}),
+			withTimeout(deleteObject(this.sRef(`${ctx.base}/${relPath}.am`)), 10_000, `Deleting ${relPath}.am`).catch(() => {}),
 		]);
 		delete ctx.updatedManifest[relPath];
 		delete ctx.updatedSyncState[relPath];
@@ -430,7 +444,7 @@ export class FlintDataTransfer {
 		]);
 
 		const remoteAmHash = await this.sha256Bytes(amBytes);
-		ctx.updatedSyncState[relPath] = { flintId: flintId!, localHash, remoteAmHash };
+		ctx.updatedSyncState[relPath] = { flintId, localHash, remoteAmHash };
 		ctx.updatedManifest[relPath] = remoteAmHash;
 	}
 
@@ -440,7 +454,16 @@ export class FlintDataTransfer {
 		file: TFile,
 		ctx: SyncCtx,
 	): Promise<void> {
-		const remoteAmBytes = await this.fetchBytes(this.sRef(`${ctx.base}/${relPath}.am`));
+		let remoteAmBytes: Uint8Array;
+		try {
+			remoteAmBytes = await this.fetchBytes(this.sRef(`${ctx.base}/${relPath}.am`));
+		} catch {
+			// .am inaccessible — fall back to the .md content and bootstrap a new doc
+			const remoteMdContent = await this.fetchText(this.sRef(`${ctx.base}/${relPath}`));
+			const doc = createDoc(remoteMdContent);
+			remoteAmBytes = saveDoc(doc);
+			await this.uploadBytes(this.sRef(`${ctx.base}/${relPath}.am`), remoteAmBytes);
+		}
 		const remoteDoc = loadDoc(remoteAmBytes);
 		const remoteContent = remoteDoc.text;
 
@@ -461,10 +484,17 @@ export class FlintDataTransfer {
 		content: string,
 		ctx: SyncCtx,
 	): Promise<void> {
-		const [remoteAmBytes, existingAmBytes] = await Promise.all([
-			this.fetchBytes(this.sRef(`${ctx.base}/${relPath}.am`)),
-			this.readLocalAm(relPath),
-		]);
+		let remoteAmBytes: Uint8Array;
+		try {
+			remoteAmBytes = await this.fetchBytes(this.sRef(`${ctx.base}/${relPath}.am`));
+		} catch {
+			// .am inaccessible — bootstrap from remote .md so merge still proceeds
+			const remoteMdContent = await this.fetchText(this.sRef(`${ctx.base}/${relPath}`));
+			const doc = createDoc(remoteMdContent);
+			remoteAmBytes = saveDoc(doc);
+			await this.uploadBytes(this.sRef(`${ctx.base}/${relPath}.am`), remoteAmBytes);
+		}
+		const existingAmBytes = await this.readLocalAm(relPath);
 
 		const remoteDoc = loadDoc(remoteAmBytes);
 		let localDoc;
@@ -496,22 +526,22 @@ export class FlintDataTransfer {
 
 	async deleteVault(vaultName: string): Promise<void> {
 		if (!vaultRef) return;
-		const list = await listAll(ref(vaultRef, vaultName));
+		const list = await withTimeout(listAll(ref(vaultRef, vaultName)), 10_000, 'Listing vault for deletion');
 		await this.deleteList(list);
 	}
 
 	async clearRemoteVault(settings: FlintPluginSettings): Promise<void> {
 		if (!settings.remoteConnectedVault || !vaultRef) return;
-		const list = await listAll(this.sRef(settings.remoteConnectedVault));
+		const list = await withTimeout(listAll(this.sRef(settings.remoteConnectedVault)), 10_000, 'Listing vault for deletion');
 		await this.deleteList(list);
 	}
 
 	private async deleteList(list: ListResult): Promise<void> {
 		for (const item of list.items) {
-			await deleteObject(ref(storage!, item.fullPath));
+			await withTimeout(deleteObject(item), 10_000, `Deleting ${item.name}`);
 		}
 		for (const prefix of list.prefixes) {
-			await this.deleteList(await listAll(prefix));
+			await this.deleteList(await withTimeout(listAll(prefix), 10_000, 'Listing remote files'));
 		}
 	}
 
@@ -532,7 +562,7 @@ export class FlintDataTransfer {
 
 		// Delete all local .md files
 		for (const file of vault.getMarkdownFiles()) {
-			await vault.delete(file);
+			await this.plugin.app.fileManager.trashFile(file);
 		}
 
 		// Clear local .am cache and sync state so every remote file looks new

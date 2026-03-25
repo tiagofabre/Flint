@@ -1,8 +1,8 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, SuggestModal, TAbstractFile, TFile, debounce } from 'obsidian';
+import { App, Modal, Notice, Plugin, SuggestModal, TAbstractFile, TFile, debounce } from 'obsidian';
 import { ListResult, listAll } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
 import { FlintDataTransfer } from 'datatools';
-import { vaultRef, auth, setupFirebase, setUserVaultRef } from 'firebase-tools';
+import { vaultRef, auth, setupFirebase, setUserVaultRef, withTimeout } from 'firebase-tools';
 import { FlintPluginSettings, FlintSettingsTab, DEFAULT_SETTINGS } from 'flint-settings';
 import { initAutomerge } from 'crdt';
 
@@ -12,12 +12,54 @@ export let remoteVaultName: string = '';
 export default class FlintPlugin extends Plugin {
 	settings: FlintPluginSettings;
 	statusBar: HTMLElement;
+	syncRibbon: HTMLElement;
 	dataTools: FlintDataTransfer;
 
 	private readonly debouncedSync = debounce(() => {
 		if (!this.settings.userEmail || !this.settings.syncOnFileChange) return;
-		this.dataTools.syncAll(this.app.vault, this.settings);
+		void this.runSync();
 	}, 5000, true);
+
+	setSyncing(syncing: boolean): void {
+		if (syncing) {
+			this.syncRibbon.addClass('flint-syncing');
+			this.statusBar.setText('Flint: syncing…');
+		} else {
+			this.syncRibbon.removeClass('flint-syncing');
+			const v = this.settings.remoteConnectedVault;
+			this.statusBar.setText(v !== 'default' ? `Flint remote set to ${v}` : 'Flint remote not set');
+		}
+	}
+
+	async runSync(): Promise<void> {
+		this.setSyncing(true);
+		try {
+			await this.dataTools.syncAll(this.app.vault, this.settings);
+		} catch (err) {
+			new Notice(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+			void this.logError('Sync', err);
+		} finally {
+			this.setSyncing(false);
+		}
+	}
+
+	async logError(context: string, err: unknown): Promise<void> {
+		const ts = new Date().toLocaleString();
+		const msg = err instanceof Error ? err.message : String(err);
+		const line = `- ${ts} | ${context} | ${msg}\n`;
+		const logPath = 'flint-logs.md';
+		try {
+			const adapter = this.app.vault.adapter;
+			if (await adapter.exists(logPath)) {
+				const existing = await adapter.read(logPath);
+				await adapter.write(logPath, existing + line);
+			} else {
+				await adapter.write(logPath, `# Flint Logs\n\n${line}`);
+			}
+		} catch {
+			console.error('[Flint] Failed to write log:', line);
+		}
+	}
 
 	private scheduledSyncHandle: number | null = null;
 
@@ -29,7 +71,7 @@ export default class FlintPlugin extends Plugin {
 		if (this.settings.scheduledSyncEnabled && this.settings.userEmail) {
 			const ms = this.settings.scheduledSyncIntervalMinutes * 60 * 1000;
 			this.scheduledSyncHandle = window.setInterval(() => {
-				this.dataTools.syncAll(this.app.vault, this.settings);
+				void this.runSync();
 			}, ms);
 		}
 	}
@@ -37,7 +79,7 @@ export default class FlintPlugin extends Plugin {
 	async onload() {
 		await initAutomerge();
 		await this.loadSettings();
-		currentVaultName = await this.app.vault.getName();
+		currentVaultName = this.app.vault.getName();
 		remoteVaultName = this.settings.remoteConnectedVault;
 		this.dataTools = new FlintDataTransfer(this);
 
@@ -45,6 +87,24 @@ export default class FlintPlugin extends Plugin {
 		if (!this.settings.deviceId) {
 			this.settings.deviceId = crypto.randomUUID();
 			await this.saveSettings();
+		}
+
+		// Ribbon and status bar must be set up before the auth listener fires
+		// (onAuthStateChanged can fire immediately with a cached token).
+		this.syncRibbon = this.addRibbonIcon('refresh-cw', 'Sync vault', (_evt: MouseEvent) => {
+			if (!this.settings.userEmail) {
+				new Notice('Please sign in first (Flint settings)');
+				return;
+			}
+			void this.runSync();
+		});
+		this.syncRibbon.addClass('flint-sync-ribbon-class');
+
+		this.statusBar = this.addStatusBarItem();
+		if (this.settings.remoteConnectedVault !== 'default') {
+			this.statusBar.setText(`Flint remote set to ${this.settings.remoteConnectedVault}`);
+		} else {
+			this.statusBar.setText('Flint remote not set');
 		}
 
 		if (this.settings.firebaseApiKey) {
@@ -56,32 +116,25 @@ export default class FlintPlugin extends Plugin {
 				messagingSenderId: this.settings.firebaseMessagingSenderId,
 				appId: this.settings.firebaseAppId,
 			});
-			onAuthStateChanged(auth!, async (user) => {
-				if (user) {
-					this.settings.userEmail = user.email ?? '';
-					setUserVaultRef(user.uid);
-					if (!this.settings.firstSyncDone) {
-						new FirstSyncModal(this.app, this).open();
-					} else if (this.settings.syncOnStartup) {
-						this.dataTools.syncAll(this.app.vault, this.settings);
+			onAuthStateChanged(auth!, (user) => {
+				void (async () => {
+					if (user) {
+						this.settings.userEmail = user.email ?? '';
+						setUserVaultRef(user.uid);
+						if (!this.settings.firstSyncDone) {
+							new FirstSyncModal(this.app, this).open();
+						} else if (this.settings.syncOnStartup) {
+							void this.runSync();
+						}
+						this.setupScheduledSync();
+					} else {
+						this.settings.userEmail = '';
+						this.setupScheduledSync(); // clears the interval on sign-out
 					}
-					this.setupScheduledSync();
-				} else {
-					this.settings.userEmail = '';
-					this.setupScheduledSync(); // clears the interval on sign-out
-				}
-				await this.saveSettings();
+					await this.saveSettings();
+				})();
 			});
 		}
-
-		const syncRibbon = this.addRibbonIcon('refresh-cw', 'Sync Vault', (evt: MouseEvent) => {
-			if (!this.settings.userEmail) {
-				new Notice('Please sign in first (Flint Settings)');
-				return;
-			}
-			this.dataTools.syncAll(this.app.vault, this.settings);
-		});
-		syncRibbon.addClass('flint-sync-ribbon-class');
 
 		// Sync on local file changes (debounced — all events share the same timer)
 		this.registerEvent(
@@ -100,19 +153,12 @@ export default class FlintPlugin extends Plugin {
 			})
 		);
 
-		this.statusBar = this.addStatusBarItem();
-		if (this.settings.remoteConnectedVault !== 'default') {
-			this.statusBar.setText(`Flint Remote Set to ${this.settings.remoteConnectedVault}`);
-		} else {
-			this.statusBar.setText('Flint Remote Not Set');
-		}
-
 		this.addCommand({
 			id: 'import-cloud-vault',
-			name: 'Import Vault from Cloud',
+			name: 'Import vault from cloud',
 			callback: () => {
 				if (!this.settings.userEmail) {
-					new Notice('Please sign in first (Flint Settings)');
+					new Notice('Please sign in first (Flint settings)');
 					return;
 				}
 				const selectionModal = new CloudVaultSelectModal(this.app, this.statusBar, this, this.settings);
@@ -122,17 +168,18 @@ export default class FlintPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'force-push',
-			name: 'Force Push (overwrite remote)',
+			name: 'Force push (overwrite remote)',
 			checkCallback: (checking: boolean) => {
 				if (!this.settings.userEmail) return false;
 				if (!checking) {
-					new Notice('Force Push: clearing remote and re-uploading everything…');
-					(async () => {
+					new Notice('Force push: clearing remote and re-uploading everything…');
+					void (async () => {
 						try {
 							await this.dataTools.forcePush(this.app.vault, this.settings);
-							new Notice('Force Push complete');
+							new Notice('Force push complete');
 						} catch (err) {
-							new Notice(`Force Push failed: ${err}`);
+							new Notice(`Force push failed: ${err instanceof Error ? err.message : String(err)}`);
+							void this.logError('Force push', err);
 						}
 					})();
 				}
@@ -142,17 +189,18 @@ export default class FlintPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'force-pull',
-			name: 'Force Pull (overwrite local with remote)',
+			name: 'Force pull (overwrite local with remote)',
 			checkCallback: (checking: boolean) => {
 				if (!this.settings.userEmail) return false;
 				if (!checking) {
-					new Notice('Force Pull: deleting local files and downloading from remote…');
-					(async () => {
+					new Notice('Force pull: deleting local files and downloading from remote…');
+					void (async () => {
 						try {
 							await this.dataTools.forcePull(this.app.vault, this.settings);
-							new Notice('Force Pull complete');
+							new Notice('Force pull complete');
 						} catch (err) {
-							new Notice(`Force Pull failed: ${err}`);
+							new Notice(`Force pull failed: ${err instanceof Error ? err.message : String(err)}`);
+							void this.logError('Force pull', err);
 						}
 					})();
 				}
@@ -167,7 +215,7 @@ export default class FlintPlugin extends Plugin {
 		remoteVaultName = remoteName;
 		this.settings.remoteConnectedVault = remoteName;
 		this.settings.firstSyncDone = false;
-		this.statusBar.setText(`Flint Remote Set to ${remoteName}`);
+		this.statusBar.setText(`Flint remote set to ${remoteName}`);
 		new Notice(`Syncing to ${remoteName}`);
 		await this.saveSettings();
 	}
@@ -180,7 +228,7 @@ export default class FlintPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()) as FlintPluginSettings;
 	}
 
 	async saveSettings() {
@@ -196,13 +244,13 @@ export interface FirebaseVault {
 async function fetchFirebaseVaults(): Promise<FirebaseVault[]> {
 	if (!vaultRef) return [];
 
-	const vaultList: ListResult = await listAll(vaultRef);
+	const vaultList: ListResult = await withTimeout(listAll(vaultRef), 10_000, 'Fetching vault list');
 	const ALL_FIREBASE_VAULTS: FirebaseVault[] = [];
 
 	for (let i = 0; i < vaultList.prefixes.length; i++) {
-		const vaultName = `${vaultList.prefixes[i]}`.split('/').pop();
+		const vaultName = vaultList.prefixes[i].fullPath.split('/').pop();
 		if (vaultName) {
-			ALL_FIREBASE_VAULTS[i] = { title: vaultName, ref: `${vaultRef}` };
+			ALL_FIREBASE_VAULTS[i] = { title: vaultName, ref: vaultRef.fullPath };
 		}
 	}
 	return ALL_FIREBASE_VAULTS;
@@ -221,44 +269,44 @@ export class FirstSyncModal extends Modal {
 		contentEl.createEl('h2', { text: 'Welcome to Flint' });
 		contentEl.createEl('p', { text: 'This looks like the first time Flint is running on this device. How would you like to start?' });
 
-		const makeButton = (label: string, desc: string, onClick: () => void) => {
+		const makeButton = (label: string, desc: string, action: () => Promise<void>) => {
 			const wrap = contentEl.createDiv({ cls: 'flint-first-sync-option' });
 			wrap.createEl('strong', { text: label });
 			wrap.createEl('p', { text: desc, cls: 'setting-item-description' });
-			wrap.addEventListener('click', onClick);
+			wrap.addEventListener('click', () => { void (async () => {
+				// Disable all options to prevent double-tap
+				contentEl.querySelectorAll<HTMLElement>('.flint-first-sync-option').forEach(el => {
+					el.style.pointerEvents = 'none';
+					el.style.opacity = '0.5';
+				});
+				this.close();
+				try {
+					await action();
+					this.plugin.settings.firstSyncDone = true;
+					await this.plugin.saveSettings();
+				} catch (err) {
+					new Notice(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+					void this.plugin.logError('First sync', err);
+				}
+			})(); });
 		};
 
 		makeButton(
 			'Merge local and remote',
 			'Upload new local files and download new remote files. Nothing is deleted. Best choice when both sides have unique content.',
-			async () => {
-				this.close();
-				await this.plugin.dataTools.safeFirstSync(this.plugin.app.vault, this.plugin.settings);
-				this.plugin.settings.firstSyncDone = true;
-				await this.plugin.saveSettings();
-			}
+			() => this.plugin.dataTools.safeFirstSync(this.plugin.app.vault, this.plugin.settings),
 		);
 
 		makeButton(
 			'Take remote (replace local)',
 			'Delete all local notes and replace them with the remote vault. Use this when setting up a new device.',
-			async () => {
-				this.close();
-				await this.plugin.dataTools.forcePull(this.plugin.app.vault, this.plugin.settings);
-				this.plugin.settings.firstSyncDone = true;
-				await this.plugin.saveSettings();
-			}
+			() => this.plugin.dataTools.forcePull(this.plugin.app.vault, this.plugin.settings),
 		);
 
 		makeButton(
 			'Take local (replace remote)',
 			'Upload all local notes and overwrite the remote vault. Use this when the remote state is outdated.',
-			async () => {
-				this.close();
-				await this.plugin.dataTools.forcePush(this.plugin.app.vault, this.plugin.settings);
-				this.plugin.settings.firstSyncDone = true;
-				await this.plugin.saveSettings();
-			}
+			() => this.plugin.dataTools.forcePush(this.plugin.app.vault, this.plugin.settings),
 		);
 	}
 
@@ -283,7 +331,7 @@ export class CloudVaultSelectModal extends SuggestModal<FirebaseVault> {
 	async getSuggestions(query: string): Promise<FirebaseVault[]> {
 		const RETRIEVED_FIREBASE_VAULTS = await fetchFirebaseVaults();
 		if (RETRIEVED_FIREBASE_VAULTS.length <= 0) {
-			new Notice('NO VAULTS PRESENT');
+			new Notice('No vaults present');
 		}
 		return RETRIEVED_FIREBASE_VAULTS.filter((vault) =>
 			vault.title.toLowerCase().includes(query.toLowerCase())
@@ -295,9 +343,9 @@ export class CloudVaultSelectModal extends SuggestModal<FirebaseVault> {
 		el.createEl('small', { text: vault.ref });
 	}
 
-	async onChooseSuggestion(vault: FirebaseVault, evt: MouseEvent | KeyboardEvent) {
+	onChooseSuggestion(vault: FirebaseVault, _evt: MouseEvent | KeyboardEvent): void {
 		new Notice(`Selected ${vault.title}`);
 		remoteVaultName = vault.title;
-		this.plugin.setRemoteDestination(vault.title);
+		void this.plugin.setRemoteDestination(vault.title);
 	}
 }
