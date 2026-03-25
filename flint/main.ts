@@ -17,8 +17,16 @@ export default class FlintPlugin extends Plugin {
 
 	private readonly debouncedSync = debounce(() => {
 		if (!this.settings.userEmail || !this.settings.syncOnFileChange) return;
+		// Drop file-change events that arrive while a sync is already running —
+		// those events are usually caused by Flint writing remote files locally,
+		// and queuing a follow-up sync would create an infinite loop.
+		if (this.isSyncing) return;
 		void this.runSync();
 	}, 5000, true);
+
+	private isSyncing = false;
+	private lastSyncUserId: string | null = null;
+	private unsubscribeAuth: (() => void) | null = null;
 
 	setSyncing(syncing: boolean): void {
 		if (syncing) {
@@ -31,7 +39,14 @@ export default class FlintPlugin extends Plugin {
 		}
 	}
 
+	private releaseSyncLock(): void {
+		this.isSyncing = false;
+		this.setSyncing(false);
+	}
+
 	async runSync(): Promise<void> {
+		if (this.isSyncing) return;
+		this.isSyncing = true;
 		this.setSyncing(true);
 		try {
 			await this.dataTools.syncAll(this.app.vault, this.settings);
@@ -39,7 +54,7 @@ export default class FlintPlugin extends Plugin {
 			new Notice(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
 			void this.logError('Sync', err);
 		} finally {
-			this.setSyncing(false);
+			this.releaseSyncLock();
 		}
 	}
 
@@ -116,18 +131,26 @@ export default class FlintPlugin extends Plugin {
 				messagingSenderId: this.settings.firebaseMessagingSenderId,
 				appId: this.settings.firebaseAppId,
 			});
-			onAuthStateChanged(auth!, (user) => {
+			this.unsubscribeAuth = onAuthStateChanged(auth!, (user) => {
 				void (async () => {
 					if (user) {
+						// Firebase can fire this callback multiple times for the same
+						// sign-in (token resolution, refresh, etc). Only trigger a
+						// startup sync and reschedule when the user actually changes.
+						const isNewLogin = user.uid !== this.lastSyncUserId;
+						this.lastSyncUserId = user.uid;
 						this.settings.userEmail = user.email ?? '';
 						setUserVaultRef(user.uid);
-						if (!this.settings.firstSyncDone) {
-							new FirstSyncModal(this.app, this).open();
-						} else if (this.settings.syncOnStartup) {
-							void this.runSync();
+						if (isNewLogin) {
+							if (!this.settings.firstSyncDone) {
+								new FirstSyncModal(this.app, this).open();
+							} else if (this.settings.syncOnStartup) {
+								void this.runSync();
+							}
+							this.setupScheduledSync();
 						}
-						this.setupScheduledSync();
 					} else {
+						this.lastSyncUserId = null;
 						this.settings.userEmail = '';
 						this.setupScheduledSync(); // clears the interval on sign-out
 					}
@@ -172,14 +195,22 @@ export default class FlintPlugin extends Plugin {
 			checkCallback: (checking: boolean) => {
 				if (!this.settings.userEmail) return false;
 				if (!checking) {
-					new Notice('Force push: clearing remote and re-uploading everything…');
 					void (async () => {
+						if (this.isSyncing) {
+							new Notice('A sync is already in progress. Please wait.');
+							return;
+						}
+						this.isSyncing = true;
+						this.setSyncing(true);
+						new Notice('Force push: clearing remote and re-uploading everything…');
 						try {
 							await this.dataTools.forcePush(this.app.vault, this.settings);
 							new Notice('Force push complete');
 						} catch (err) {
 							new Notice(`Force push failed: ${err instanceof Error ? err.message : String(err)}`);
 							void this.logError('Force push', err);
+						} finally {
+							this.releaseSyncLock();
 						}
 					})();
 				}
@@ -193,14 +224,22 @@ export default class FlintPlugin extends Plugin {
 			checkCallback: (checking: boolean) => {
 				if (!this.settings.userEmail) return false;
 				if (!checking) {
-					new Notice('Force pull: deleting local files and downloading from remote…');
 					void (async () => {
+						if (this.isSyncing) {
+							new Notice('A sync is already in progress. Please wait.');
+							return;
+						}
+						this.isSyncing = true;
+						this.setSyncing(true);
+						new Notice('Force pull: deleting local files and downloading from remote…');
 						try {
 							await this.dataTools.forcePull(this.app.vault, this.settings);
 							new Notice('Force pull complete');
 						} catch (err) {
 							new Notice(`Force pull failed: ${err instanceof Error ? err.message : String(err)}`);
 							void this.logError('Force pull', err);
+						} finally {
+							this.releaseSyncLock();
 						}
 					})();
 				}
@@ -225,6 +264,7 @@ export default class FlintPlugin extends Plugin {
 			window.clearInterval(this.scheduledSyncHandle);
 			this.scheduledSyncHandle = null;
 		}
+		this.unsubscribeAuth?.();
 	}
 
 	async loadSettings() {
