@@ -39,7 +39,7 @@ export default tseslint.config(
 	},
 	{
 		// Node.js utility scripts
-		files: ['deploy.mjs', 'version-bump.mjs'],
+		files: ['deploy.mjs', 'version-bump.mjs', 'release.mjs'],
 		languageOptions: {
 			globals: { process: 'readonly', console: 'readonly' },
 		},

@@ -76,7 +76,7 @@ export default class FlintPlugin extends Plugin {
 		};
 	}
 
-	logError(context: string, err: FlintError | unknown): T.Task<void> {
+	logError(context: string, err: unknown): T.Task<void> {
 		return async () => {
 			const ts = new Date().toLocaleString();
 			const msg = err !== null && typeof err === 'object' && '_tag' in err
@@ -322,7 +322,7 @@ export default class FlintPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const raw = await this.loadData();
+		const raw: unknown = await this.loadData();
 		const result = parseSettings(raw);
 		if (E.isRight(result)) {
 			this.settings = result.right;
@@ -383,8 +383,7 @@ export class FirstSyncModal extends Modal {
 			wrap.addEventListener('click', () => { void (async () => {
 				// Disable all options to prevent double-tap
 				contentEl.querySelectorAll<HTMLElement>('.flint-first-sync-option').forEach(el => {
-					el.style.pointerEvents = 'none';
-					el.style.opacity = '0.5';
+					el.addClass('flint-first-sync-option--disabled');
 				});
 				this.close();
 				const result = await action()();

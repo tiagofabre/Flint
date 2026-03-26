@@ -3,7 +3,6 @@ import {
 	displayError,
 	friendlyAuthCode,
 	mkNetwork, mkStorage, mkLocalFile, mkCrdt, mkSettings, mkSync, mkTimeout, mkFirebaseAuth, cancelled,
-	type FlintError,
 } from '../errors';
 
 describe('smart constructors', () => {

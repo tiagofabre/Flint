@@ -36,6 +36,11 @@
 	background: var(--background-modifier-hover);
 }
 
+.flint-first-sync-option--disabled {
+	pointer-events: none;
+	opacity: 0.5;
+}
+
 /* Mass deletion modal button row */
 .flint-modal-btn-row {
 	display: flex;

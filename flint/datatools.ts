@@ -15,7 +15,7 @@ import { pipe } from 'fp-ts/function';
 import FlintPlugin from 'main';
 import { requireFirebaseState, withTimeout } from 'firebase-tools';
 import { FlintPluginSettings, FileSyncState, SyncState } from 'flint-settings';
-import { FlintError, mkStorage, mkLocalFile, mkNetwork, mkSettings, cancelled, displayError } from 'errors';
+import { FlintError, mkStorage, mkLocalFile, mkSettings, cancelled, displayError } from 'errors';
 import {
 	createDoc,
 	loadDoc,
