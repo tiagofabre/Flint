@@ -29,6 +29,7 @@ if (!existsSync(target)) {
 const files = [
 	['dist/main.js', 'main.js'],
 	['manifest.json', 'manifest.json'],
+	['styles.css', 'styles.css'],
 ];
 
 for (const [src, out] of files) {

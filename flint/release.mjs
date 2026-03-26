@@ -53,6 +53,6 @@ run('git push --set-upstream origin main');
 run(`git push origin ${version}`);
 
 // 7. Create GitHub release with required Obsidian assets
-run(`gh release create ${version} dist/main.js manifest.json --title "${version}" --notes "Release ${version}"`);
+run(`gh release create ${version} dist/main.js manifest.json styles.css --title "${version}" --notes "Release ${version}"`);
 
 console.log(`\nDone! https://github.com/tiagofabre/Flint/releases/tag/${version}`);
