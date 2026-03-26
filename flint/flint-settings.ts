@@ -7,7 +7,7 @@ import FlintPlugin from 'main';
 import { requireFirebaseState, getFirebaseAuth, withTimeout } from 'firebase-tools';
 import { ListResult, listAll } from 'firebase/storage';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
-import { FlintError, mkSettings, mkStorage, displayError } from 'errors';
+import { FlintError, mkSettings, mkStorage, mkFirebaseAuth, displayError } from 'errors';
 
 // ── Settings schema ───────────────────────────────────────────────────────────
 
@@ -216,7 +216,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 		if (!isConfigured) {
 			new Setting(containerEl).setName('Firebase configuration').setHeading();
 			containerEl.createEl('p', {
-				text: 'Enter your Firebase project credentials. Find these in Firebase Console → Project Settings → your apps → SDK setup.',
+				text: 'Enter your Firebase project credentials. Find these in the Firebase console under project settings → your apps → SDK setup.',
 				cls: 'setting-item-description',
 			});
 
@@ -289,8 +289,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 			new Setting(containerEl)
 				.setName('Email')
 				.addText(text => text
-					// eslint-disable-next-line obsidianmd/ui/sentence-case -- email placeholder is intentionally lowercase; emails are always lowercase by convention
-					.setPlaceholder('you@example.com')
+					.setPlaceholder('Email address')
 					.onChange(val => { emailInput = val.trim(); }));
 
 			new Setting(containerEl)
@@ -313,7 +312,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 							TE.fromEither(getFirebaseAuth()),
 							TE.chain(a => TE.tryCatch(
 								() => withTimeout(signInWithEmailAndPassword(a, emailInput, passwordInput), 10_000, 'Sign in'),
-								(e): FlintError => ({ _tag: 'FirebaseAuthError', code: (e as { code?: string })?.code ?? '', message: e instanceof Error ? e.message : String(e) }),
+								(e): FlintError => mkFirebaseAuth((e as { code?: string })?.code ?? '', e instanceof Error ? e.message : String(e)),
 							)),
 							TE.chain(result => TE.tryCatch(async () => {
 								this.plugin.settings.userEmail = result.user.email ?? '';
@@ -336,7 +335,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 							TE.fromEither(getFirebaseAuth()),
 							TE.chain(a => TE.tryCatch(
 								() => withTimeout(createUserWithEmailAndPassword(a, emailInput, passwordInput), 10_000, 'Create account'),
-								(e): FlintError => ({ _tag: 'FirebaseAuthError', code: (e as { code?: string })?.code ?? '', message: e instanceof Error ? e.message : String(e) }),
+								(e): FlintError => mkFirebaseAuth((e as { code?: string })?.code ?? '', e instanceof Error ? e.message : String(e)),
 							)),
 							TE.chain(result => TE.tryCatch(async () => {
 								this.plugin.settings.userEmail = result.user.email ?? '';
@@ -385,7 +384,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 		if (noVaultSelected) {
 			new Setting(containerEl)
 				.setName('Vault not initialized')
-				.setDesc('Go to the Vaults tab to initialize your vault on Firebase.')
+				.setDesc('Go to the vaults tab to initialize your vault on Firebase.')
 				.addButton(btn => btn
 					.setButtonText('Go to vaults')
 					.setCta()
@@ -403,7 +402,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 
 	private renderVaults(containerEl: HTMLElement, isSignedIn: boolean, vaultNames: string[]) {
 		if (!isSignedIn) {
-			containerEl.createEl('p', { text: 'Sign in first via the General tab.', cls: 'setting-item-description' });
+			containerEl.createEl('p', { text: 'Sign in first via the general tab.', cls: 'setting-item-description' });
 			return;
 		}
 
@@ -477,7 +476,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 
 	private renderSync(containerEl: HTMLElement, isSignedIn: boolean) {
 		if (!isSignedIn) {
-			containerEl.createEl('p', { text: 'Sign in first via the General tab.', cls: 'setting-item-description' });
+			containerEl.createEl('p', { text: 'Sign in first via the general tab.', cls: 'setting-item-description' });
 			return;
 		}
 

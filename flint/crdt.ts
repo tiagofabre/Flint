@@ -3,7 +3,7 @@ import * as Automerge from "@automerge/automerge/slim";
 // @ts-ignore
 import { automergeWasmBase64 } from "@automerge/automerge/automerge.wasm.base64.js";
 
-export interface FlintDoc {
+interface FlintDoc {
 	text: string;
 }
 

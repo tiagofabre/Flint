@@ -10,9 +10,6 @@ import { FlintPluginSettings, FlintSettingsTab, DEFAULT_SETTINGS, parseSettings 
 import { FlintError, mkSettings, displayError, isUnauthenticatedError } from 'errors';
 import { initAutomerge } from 'crdt';
 
-export let currentVaultName: string = 'vaults';
-export let remoteVaultName: string = '';
-
 export default class FlintPlugin extends Plugin {
 	settings: FlintPluginSettings;
 	statusBar: HTMLElement;
@@ -185,8 +182,6 @@ export default class FlintPlugin extends Plugin {
 	async onload() {
 		await initAutomerge();
 		await this.loadSettings();
-		currentVaultName = this.app.vault.getName();
-		remoteVaultName = this.settings.remoteConnectedVault;
 		this.dataTools = new FlintDataTransfer(this);
 
 		// Generate a stable device ID if not yet assigned
@@ -305,7 +300,6 @@ export default class FlintPlugin extends Plugin {
 	}
 
 	async setRemoteDestination(remoteName: string) {
-		remoteVaultName = remoteName;
 		this.settings.remoteConnectedVault = remoteName;
 		this.settings.firstSyncDone = false;
 		this.statusBar.setText(`Flint remote set to ${remoteName}`);
@@ -453,7 +447,6 @@ export class CloudVaultSelectModal extends SuggestModal<FirebaseVault> {
 
 	onChooseSuggestion(vault: FirebaseVault, _evt: MouseEvent | KeyboardEvent): void {
 		new Notice(`Selected ${vault.title}`);
-		remoteVaultName = vault.title;
 		void this.plugin.setRemoteDestination(vault.title);
 	}
 }
