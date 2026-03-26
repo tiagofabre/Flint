@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import { Modal, Notice, TFile, TFolder, Vault, requestUrl } from 'obsidian';
 import {
 	StorageReference,
@@ -22,6 +21,7 @@ import {
 	saveDoc,
 	updateDoc,
 	mergeDocs,
+	getDocText,
 	injectFlintId,
 	extractFlintId,
 } from 'crdt';
@@ -240,8 +240,7 @@ export class FlintDataTransfer {
 				      `because they are missing locally but were previously synced from this device.`,
 			});
 			modal.contentEl.createEl('p', {
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				text: 'This can happen if you set up Flint on a new device without using "Take remote" on first sync.',
+				text: 'This can happen if you set up Flint on a new device without using "take remote" on first sync.',
 				cls: 'setting-item-description',
 			});
 
@@ -609,7 +608,7 @@ export class FlintDataTransfer {
 			}
 
 			const remoteDoc = loadDoc(remoteAmBytes);
-			const remoteContent = remoteDoc.text;
+			const remoteContent = getDocText(remoteDoc);
 
 			const modResult = await TE.tryCatch(
 				() => ctx.vault.modify(file, remoteContent),

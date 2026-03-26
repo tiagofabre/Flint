@@ -216,8 +216,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 		if (!isConfigured) {
 			new Setting(containerEl).setName('Firebase configuration').setHeading();
 			containerEl.createEl('p', {
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
-				text: 'Enter your Firebase project credentials. Find these in Firebase Console → Project Settings → Your apps → SDK setup.',
+				text: 'Enter your Firebase project credentials. Find these in Firebase Console → Project Settings → your apps → SDK setup.',
 				cls: 'setting-item-description',
 			});
 
@@ -290,7 +289,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 			new Setting(containerEl)
 				.setName('Email')
 				.addText(text => text
-					// eslint-disable-next-line obsidianmd/ui/sentence-case
+					// eslint-disable-next-line obsidianmd/ui/sentence-case -- email placeholder is intentionally lowercase; emails are always lowercase by convention
 					.setPlaceholder('you@example.com')
 					.onChange(val => { emailInput = val.trim(); }));
 
@@ -386,7 +385,6 @@ export class FlintSettingsTab extends PluginSettingTab {
 		if (noVaultSelected) {
 			new Setting(containerEl)
 				.setName('Vault not initialized')
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				.setDesc('Go to the Vaults tab to initialize your vault on Firebase.')
 				.addButton(btn => btn
 					.setButtonText('Go to vaults')
@@ -398,7 +396,6 @@ export class FlintSettingsTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName('Device ID')
 			.setDesc(this.plugin.settings.deviceId || '(not yet assigned)')
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			.setTooltip('Stable identifier for this device, used by the CRDT sync engine');
 	}
 
@@ -406,7 +403,6 @@ export class FlintSettingsTab extends PluginSettingTab {
 
 	private renderVaults(containerEl: HTMLElement, isSignedIn: boolean, vaultNames: string[]) {
 		if (!isSignedIn) {
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			containerEl.createEl('p', { text: 'Sign in first via the General tab.', cls: 'setting-item-description' });
 			return;
 		}
@@ -420,7 +416,6 @@ export class FlintSettingsTab extends PluginSettingTab {
 			const targetName = remoteVault === 'default' ? localVaultName : remoteVault;
 			new Setting(containerEl)
 				.setName(`Initialize "${targetName}"`)
-				// eslint-disable-next-line obsidianmd/ui/sentence-case
 				.setDesc('This vault has not been pushed to Firebase yet.')
 				.addButton(btn => btn
 					.setButtonText('Initialize')
@@ -482,7 +477,6 @@ export class FlintSettingsTab extends PluginSettingTab {
 
 	private renderSync(containerEl: HTMLElement, isSignedIn: boolean) {
 		if (!isSignedIn) {
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			containerEl.createEl('p', { text: 'Sign in first via the General tab.', cls: 'setting-item-description' });
 			return;
 		}

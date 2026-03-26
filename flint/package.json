@@ -20,6 +20,7 @@
 	"author": "Tiago Fabre, Andrew Mao",
 	"license": "MIT",
 	"devDependencies": {
+		"@eslint-community/eslint-plugin-eslint-comments": "^4.7.1",
 		"@eslint/json": "^1.2.0",
 		"@types/node": "^20.19.37",
 		"@typescript-eslint/eslint-plugin": "5.29.0",

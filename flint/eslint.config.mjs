@@ -1,5 +1,6 @@
 import tseslint from 'typescript-eslint';
 import obsidianmd from 'eslint-plugin-obsidianmd';
+import eslintComments from '@eslint-community/eslint-plugin-eslint-comments';
 
 export default tseslint.config(
 	...obsidianmd.configs.recommended,
@@ -7,6 +8,8 @@ export default tseslint.config(
 		// TypeScript plugin source files
 		files: ['*.ts'],
 		extends: [...tseslint.configs.recommended],
+		plugins: { '@eslint-community/eslint-comments': eslintComments },
+		linterOptions: { reportUnusedDisableDirectives: 'error' },
 		languageOptions: {
 			parserOptions: { project: './tsconfig.json' },
 		},
@@ -14,8 +17,13 @@ export default tseslint.config(
 			'@typescript-eslint/no-unused-vars': ['error', { args: 'none' }],
 			'@typescript-eslint/ban-ts-comment': 'off',
 			'@typescript-eslint/no-empty-function': 'off',
+			'@typescript-eslint/no-redundant-type-constituents': 'error',
+			'@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true, allowBoolean: true }],
 			'depend/ban-dependencies': 'off',
-			'obsidianmd/ui/sentence-case': ['error', { ignoreWords: ['Flint'] }],
+			'obsidianmd/ui/sentence-case': ['error', { ignoreWords: ['Flint', 'Firebase', 'Console', 'Project', 'Settings', 'SDK', 'Vaults', 'General', 'CRDT'] }],
+			'@eslint-community/eslint-comments/require-description': ['error', { ignore: ['eslint-enable'] }],
+			'@eslint-community/eslint-comments/disable-enable-pair': 'error',
+			'@eslint-community/eslint-comments/no-unused-disable': 'error',
 		},
 	},
 	{
