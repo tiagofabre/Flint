@@ -73,18 +73,17 @@ export class FlintDataTransfer {
 				(e): FlintError => mkNetwork(e instanceof Error ? e.message : String(e))
 			),
 			TE.chain(url => TE.tryCatch(
-				() => new Promise<Uint8Array>((resolve, reject) => {
-					const xhr = new XMLHttpRequest();
-					xhr.responseType = 'arraybuffer';
-					xhr.timeout = 10_000;
-					xhr.onload = () => xhr.status >= 200 && xhr.status < 300
-						? resolve(new Uint8Array(xhr.response as ArrayBuffer))
-						: reject(new Error(`HTTP ${xhr.status} — ${xhr.statusText}${xhr.responseText ? ': ' + xhr.responseText : ''}`));
-					xhr.onerror = () => reject(new Error(`XHR network error: status ${xhr.status}, statusText: "${xhr.statusText}"`));
-					xhr.ontimeout = () => reject(new Error(`Download timed out: ${r.fullPath}`));
-					xhr.open('GET', url);
-					xhr.send();
-				}),
+				async () => {
+					const controller = new AbortController();
+					const timeoutId = setTimeout(() => controller.abort(), 10_000);
+					try {
+						const res = await fetch(url, { signal: controller.signal });
+						if (!res.ok) throw new Error(`HTTP ${res.status} — ${res.statusText}`);
+						return new Uint8Array(await res.arrayBuffer());
+					} finally {
+						clearTimeout(timeoutId);
+					}
+				},
 				e => mkStorage('download', r.fullPath, e),
 			)),
 		);
