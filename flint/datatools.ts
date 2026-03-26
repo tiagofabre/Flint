@@ -2,7 +2,7 @@
 import { Modal, Notice, TFile, TFolder, Vault } from 'obsidian';
 import {
 	StorageReference,
-	getDownloadURL,
+	getBytes,
 	ref,
 	uploadBytesResumable,
 	ListResult,
@@ -67,25 +67,9 @@ export class FlintDataTransfer {
 	}
 
 	private fetchBytes(r: StorageReference): TE.TaskEither<FlintError, Uint8Array> {
-		return pipe(
-			TE.tryCatch(
-				() => withTimeout(getDownloadURL(r), 10_000, `Getting URL for ${r.name}`),
-				(e): FlintError => mkNetwork(e instanceof Error ? e.message : String(e))
-			),
-			TE.chain(url => TE.tryCatch(
-				async () => {
-					const controller = new AbortController();
-					const timeoutId = setTimeout(() => controller.abort(), 10_000);
-					try {
-						const res = await fetch(url, { signal: controller.signal });
-						if (!res.ok) throw new Error(`HTTP ${res.status} — ${res.statusText}`);
-						return new Uint8Array(await res.arrayBuffer());
-					} finally {
-						clearTimeout(timeoutId);
-					}
-				},
-				e => mkStorage('download', r.fullPath, e),
-			)),
+		return TE.tryCatch(
+			() => withTimeout(getBytes(r), 10_000, `Downloading ${r.name}`).then(b => new Uint8Array(b)),
+			e => mkStorage('download', r.fullPath, e),
 		);
 	}
 
