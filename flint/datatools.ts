@@ -1,10 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
-import { Modal, Notice, TFile, TFolder, Vault } from 'obsidian';
+import { Modal, Notice, TFile, TFolder, Vault, requestUrl } from 'obsidian';
 import {
 	StorageReference,
-	getBytes,
 	ref,
-	uploadBytesResumable,
 	ListResult,
 	listAll,
 	deleteObject,
@@ -67,10 +65,22 @@ export class FlintDataTransfer {
 	}
 
 	private fetchBytes(r: StorageReference): TE.TaskEither<FlintError, Uint8Array> {
-		return TE.tryCatch(
-			() => withTimeout(getBytes(r), 10_000, `Downloading ${r.name}`).then(b => new Uint8Array(b)),
-			e => mkStorage('download', r.fullPath, e),
-		);
+		return async () => {
+			const stateResult = requireFirebaseState();
+			if (E.isLeft(stateResult)) return stateResult;
+			const token = await stateResult.right.auth.currentUser?.getIdToken().catch(() => null) ?? null;
+			const url = `https://firebasestorage.googleapis.com/v0/b/${r.bucket}/o/${encodeURIComponent(r.fullPath)}?alt=media`;
+			try {
+				const res = await requestUrl({
+					url,
+					method: 'GET',
+					headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+				});
+				return E.right(new Uint8Array(res.arrayBuffer));
+			} catch (e) {
+				return E.left(mkStorage('download', r.fullPath, e));
+			}
+		};
 	}
 
 	private fetchText(r: StorageReference): TE.TaskEither<FlintError, string> {
@@ -78,14 +88,27 @@ export class FlintDataTransfer {
 	}
 
 	private uploadBytes(r: StorageReference, bytes: Uint8Array): TE.TaskEither<FlintError, void> {
-		return TE.tryCatch(
-			() => withTimeout(
-				new Promise<void>((resolve, reject) => { uploadBytesResumable(r, bytes).then(() => resolve(), reject); }),
-				10_000,
-				`Uploading ${r.name}`,
-			),
-			e => mkStorage('upload', r.fullPath, e),
-		);
+		return async () => {
+			const stateResult = requireFirebaseState();
+			if (E.isLeft(stateResult)) return stateResult;
+			const token = await stateResult.right.auth.currentUser?.getIdToken().catch(() => null) ?? null;
+			if (!token) return E.left(mkStorage('upload', r.fullPath, new Error('Not authenticated')));
+			const url = `https://firebasestorage.googleapis.com/v0/b/${r.bucket}/o?uploadType=media&name=${encodeURIComponent(r.fullPath)}`;
+			try {
+				await requestUrl({
+					url,
+					method: 'POST',
+					headers: {
+						'Authorization': `Bearer ${token}`,
+						'Content-Type': 'application/octet-stream',
+					},
+					body: bytes.buffer as ArrayBuffer,
+				});
+				return E.right(undefined);
+			} catch (e) {
+				return E.left(mkStorage('upload', r.fullPath, e));
+			}
+		};
 	}
 
 	private uploadText(r: StorageReference, text: string): TE.TaskEither<FlintError, void> {
