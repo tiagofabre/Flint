@@ -60,8 +60,11 @@ export class FlintDataTransfer {
 					reject(new Error(`HTTP ${xhr.status} fetching ${r.fullPath}`));
 				}
 			};
-			xhr.onerror = () => reject(new Error('XHR error'));
-			xhr.ontimeout = () => reject(new Error(`Download timed out after 10s`));
+			xhr.onerror = () => reject(new Error(
+				`XHR network error fetching ${r.fullPath} — status: ${xhr.status}, statusText: "${xhr.statusText}"` +
+				(xhr.responseText ? `, response: ${xhr.responseText}` : '')
+			));
+			xhr.ontimeout = () => reject(new Error(`Download timed out after 10s: ${r.fullPath}`));
 			xhr.open('GET', url);
 			xhr.send();
 		});
@@ -284,6 +287,7 @@ export class FlintDataTransfer {
 			);
 		} catch (err) {
 			console.error('[Flint] manifest upload failed:', err);
+			void this.plugin.logError('Manifest upload', err);
 		}
 
 		// 6. Persist sync state to disk
@@ -457,8 +461,9 @@ export class FlintDataTransfer {
 		let remoteAmBytes: Uint8Array;
 		try {
 			remoteAmBytes = await this.fetchBytes(this.sRef(`${ctx.base}/${relPath}.am`));
-		} catch {
+		} catch (err) {
 			// .am inaccessible — fall back to the .md content and bootstrap a new doc
+			void this.plugin.logError(`Fetching .am for ${relPath} (falling back to .md)`, err);
 			const remoteMdContent = await this.fetchText(this.sRef(`${ctx.base}/${relPath}`));
 			const doc = createDoc(remoteMdContent);
 			remoteAmBytes = saveDoc(doc);
@@ -487,8 +492,9 @@ export class FlintDataTransfer {
 		let remoteAmBytes: Uint8Array;
 		try {
 			remoteAmBytes = await this.fetchBytes(this.sRef(`${ctx.base}/${relPath}.am`));
-		} catch {
+		} catch (err) {
 			// .am inaccessible — bootstrap from remote .md so merge still proceeds
+			void this.plugin.logError(`Fetching .am for ${relPath} during merge (falling back to .md)`, err);
 			const remoteMdContent = await this.fetchText(this.sRef(`${ctx.base}/${relPath}`));
 			const doc = createDoc(remoteMdContent);
 			remoteAmBytes = saveDoc(doc);
