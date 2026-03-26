@@ -49,7 +49,7 @@ run(`git commit -m "Bump version to ${version}"`);
 
 // 6. Tag and push
 run(`git tag ${version}`);
-run('git push');
+run('git push --set-upstream origin main');
 run('git push --tags');
 
 // 7. Create GitHub release with required Obsidian assets
