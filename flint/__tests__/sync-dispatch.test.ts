@@ -14,6 +14,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as E from 'fp-ts/Either';
+import * as TE from 'fp-ts/TaskEither';
 
 // ── External dependency mocks (hoisted before imports) ────────────────────────
 
@@ -33,7 +35,9 @@ vi.mock('firebase/storage', () => ({
 }));
 
 vi.mock('firebase-tools', () => ({
-	vaultRef: { fullPath: 'vaults' },
+	requireFirebaseState: vi.fn().mockReturnValue(E.right({ userVaultRef: { fullPath: 'vaults' } })),
+	withTimeout: vi.fn(),
+	withTimeoutTE: vi.fn(),
 }));
 
 vi.mock('main', () => ({
@@ -49,6 +53,15 @@ vi.mock('crdt', () => ({
 	injectFlintId: vi.fn((c: string, id: string) => `---\n_flint_id: ${id}\n---\n${c}`),
 	extractFlintId: vi.fn().mockReturnValue(null),
 	initAutomerge: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('errors', () => ({
+	mkLocalFile: vi.fn((op: string, path: string, e: unknown) => ({ _tag: 'LocalFileError', op, path, message: String(e) })),
+	mkStorage: vi.fn((op: string, path: string, e: unknown) => ({ _tag: 'StorageError', op, path, message: String(e) })),
+	mkNetwork: vi.fn((msg: string) => ({ _tag: 'NetworkError', message: msg })),
+	mkSettings: vi.fn((field: string | undefined, msg: string) => ({ _tag: 'SettingsError', field, message: msg })),
+	cancelled: { _tag: 'UserCancelledError' },
+	displayError: vi.fn((e: any) => e?.message ?? String(e)),
 }));
 
 import { FlintDataTransfer, SyncCtx } from '../datatools';
@@ -75,6 +88,7 @@ function makePlugin() {
 		},
 		loadData: vi.fn().mockResolvedValue({}),
 		saveData: vi.fn().mockResolvedValue(undefined),
+		logError: vi.fn().mockReturnValue(async () => undefined),
 	};
 }
 
@@ -103,7 +117,7 @@ function makeFakeFile(path = 'note.md') {
 describe('sync dispatch table', () => {
 	let dt: FlintDataTransfer;
 
-	// Spies for each handler
+	// Spies for each handler — now return TaskEither<FlintError, 'synced'>
 	let spyNewLocal: ReturnType<typeof vi.spyOn>;
 	let spyNewRemote: ReturnType<typeof vi.spyOn>;
 	let spyLocalChanged: ReturnType<typeof vi.spyOn>;
@@ -115,12 +129,12 @@ describe('sync dispatch table', () => {
 		vi.clearAllMocks();
 		dt = new FlintDataTransfer(makePlugin() as any);
 
-		// Mock all handlers so only dispatch logic executes
-		spyNewLocal     = vi.spyOn(dt as any, 'syncNewLocal').mockResolvedValue(undefined);
-		spyNewRemote    = vi.spyOn(dt as any, 'syncNewRemote').mockResolvedValue(undefined);
-		spyLocalChanged = vi.spyOn(dt as any, 'syncLocalChanged').mockResolvedValue(undefined);
-		spyRemoteChanged = vi.spyOn(dt as any, 'syncRemoteChanged').mockResolvedValue(undefined);
-		spyBothChanged  = vi.spyOn(dt as any, 'syncBothChanged').mockResolvedValue(undefined);
+		// Mock all handlers to return TE.right('synced')
+		spyNewLocal      = vi.spyOn(dt as any, 'syncNewLocal').mockReturnValue(TE.right('synced' as const));
+		spyNewRemote     = vi.spyOn(dt as any, 'syncNewRemote').mockReturnValue(TE.right('synced' as const));
+		spyLocalChanged  = vi.spyOn(dt as any, 'syncLocalChanged').mockReturnValue(TE.right('synced' as const));
+		spyRemoteChanged = vi.spyOn(dt as any, 'syncRemoteChanged').mockReturnValue(TE.right('synced' as const));
+		spyBothChanged   = vi.spyOn(dt as any, 'syncBothChanged').mockReturnValue(TE.right('synced' as const));
 
 		// sha256 returns a deterministic string based on input so we can control hashes
 		spySha256 = vi.spyOn(dt as any, 'sha256').mockImplementation(
@@ -132,11 +146,10 @@ describe('sync dispatch table', () => {
 
 	it('local only → syncNewLocal', async () => {
 		const ctx = makeCtx();
-		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), false, ctx
-		);
+		const result = await (dt as any).processFile('note.md', makeFakeFile(), false, ctx)();
 
-		expect(result).toBe('synced');
+		expect(E.isRight(result)).toBe(true);
+		if (E.isRight(result)) expect(result.right).toBe('synced');
 		expect(spyNewLocal).toHaveBeenCalledOnce();
 		expect(spyNewLocal).toHaveBeenCalledWith('note.md', expect.anything(), ctx);
 		expect(spyNewRemote).not.toHaveBeenCalled();
@@ -149,11 +162,10 @@ describe('sync dispatch table', () => {
 
 	it('remote only → syncNewRemote', async () => {
 		const ctx = makeCtx();
-		const result = await (dt as any).processFile(
-			'note.md', undefined, true, ctx
-		);
+		const result = await (dt as any).processFile('note.md', undefined, true, ctx)();
 
-		expect(result).toBe('synced');
+		expect(E.isRight(result)).toBe(true);
+		if (E.isRight(result)) expect(result.right).toBe('synced');
 		expect(spyNewRemote).toHaveBeenCalledOnce();
 		expect(spyNewRemote).toHaveBeenCalledWith('note.md', ctx);
 		expect(spyNewLocal).not.toHaveBeenCalled();
@@ -165,18 +177,16 @@ describe('sync dispatch table', () => {
 	// ── Row 3: nothing changed → skip ─────────────────────────────────────────
 
 	it('localChanged=false, remoteChanged=false → skip', async () => {
-		// state.localHash matches current content hash, manifest hash matches state
 		const ctx = makeCtx({
 			state: makeState(CONTENT_HASH, REMOTE_AM_HASH),
 			updatedManifest: { 'note.md': REMOTE_AM_HASH }, // same as state
 		});
 
-		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, ctx
-		);
+		const result = await (dt as any).processFile('note.md', makeFakeFile(), true, ctx)();
 
-		expect(result).toBe('skipped');
-		expect(spySha256).toHaveBeenCalledWith(CONTENT); // hash was computed
+		expect(E.isRight(result)).toBe(true);
+		if (E.isRight(result)) expect(result.right).toBe('skipped');
+		expect(spySha256).toHaveBeenCalledWith(CONTENT);
 		expect(spyLocalChanged).not.toHaveBeenCalled();
 		expect(spyRemoteChanged).not.toHaveBeenCalled();
 		expect(spyBothChanged).not.toHaveBeenCalled();
@@ -187,17 +197,15 @@ describe('sync dispatch table', () => {
 	// ── Row 4: local changed only → upload ────────────────────────────────────
 
 	it('localChanged=true, remoteChanged=false → syncLocalChanged', async () => {
-		// state.localHash is OLD (doesn't match current content hash)
 		const ctx = makeCtx({
 			state: makeState('hash:old content', REMOTE_AM_HASH),
 			updatedManifest: { 'note.md': REMOTE_AM_HASH }, // remote unchanged
 		});
 
-		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, ctx
-		);
+		const result = await (dt as any).processFile('note.md', makeFakeFile(), true, ctx)();
 
-		expect(result).toBe('synced');
+		expect(E.isRight(result)).toBe(true);
+		if (E.isRight(result)) expect(result.right).toBe('synced');
 		expect(spyLocalChanged).toHaveBeenCalledOnce();
 		expect(spyLocalChanged).toHaveBeenCalledWith(
 			'note.md', expect.anything(), CONTENT, CONTENT_HASH, ctx
@@ -210,17 +218,15 @@ describe('sync dispatch table', () => {
 
 	it('localChanged=false, remoteChanged=true → syncRemoteChanged', async () => {
 		const NEW_REMOTE_HASH = 'remote-am-hash-NEW';
-		// state.localHash matches current content but manifest has a new remote hash
 		const ctx = makeCtx({
 			state: makeState(CONTENT_HASH, REMOTE_AM_HASH),
 			updatedManifest: { 'note.md': NEW_REMOTE_HASH }, // remote changed
 		});
 
-		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, ctx
-		);
+		const result = await (dt as any).processFile('note.md', makeFakeFile(), true, ctx)();
 
-		expect(result).toBe('synced');
+		expect(E.isRight(result)).toBe(true);
+		if (E.isRight(result)) expect(result.right).toBe('synced');
 		expect(spyRemoteChanged).toHaveBeenCalledOnce();
 		expect(spyRemoteChanged).toHaveBeenCalledWith('note.md', expect.anything(), ctx);
 		expect(spyLocalChanged).not.toHaveBeenCalled();
@@ -236,11 +242,10 @@ describe('sync dispatch table', () => {
 			updatedManifest: { 'note.md': NEW_REMOTE_HASH },      // remote also changed
 		});
 
-		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, ctx
-		);
+		const result = await (dt as any).processFile('note.md', makeFakeFile(), true, ctx)();
 
-		expect(result).toBe('synced');
+		expect(E.isRight(result)).toBe(true);
+		if (E.isRight(result)) expect(result.right).toBe('synced');
 		expect(spyBothChanged).toHaveBeenCalledOnce();
 		expect(spyBothChanged).toHaveBeenCalledWith(
 			'note.md', expect.anything(), CONTENT, ctx
@@ -252,17 +257,26 @@ describe('sync dispatch table', () => {
 	// ── Edge: no state + both exist → treat as both changed ───────────────────
 
 	it('no prior sync state + exists on both sides → syncBothChanged', async () => {
-		// When state is undefined, both localChanged and remoteChanged are true
 		const ctx = makeCtx({
 			state: undefined,
 			updatedManifest: { 'note.md': REMOTE_AM_HASH },
 		});
 
-		const result = await (dt as any).processFile(
-			'note.md', makeFakeFile(), true, ctx
-		);
+		const result = await (dt as any).processFile('note.md', makeFakeFile(), true, ctx)();
 
-		expect(result).toBe('synced');
+		expect(E.isRight(result)).toBe(true);
 		expect(spyBothChanged).toHaveBeenCalledOnce();
+	});
+
+	// ── Error propagation: handler Left propagates ────────────────────────────
+
+	it('handler Left propagates through processFile', async () => {
+		const err = { _tag: 'StorageError' as const, op: 'upload' as const, path: 'test', message: 'fail' };
+		spyNewLocal.mockReturnValue(TE.left(err));
+		const ctx = makeCtx();
+		const result = await (dt as any).processFile('note.md', makeFakeFile(), false, ctx)();
+
+		expect(E.isLeft(result)).toBe(true);
+		if (E.isLeft(result)) expect(result.left).toEqual(err);
 	});
 });

@@ -14,6 +14,7 @@ export default defineConfig({
 			'flint-settings': resolve(__dirname, 'flint-settings.ts'),
 			'crdt': resolve(__dirname, 'crdt.ts'),
 			'datatools': resolve(__dirname, 'datatools.ts'),
+			'errors': resolve(__dirname, 'errors.ts'),
 		},
 	},
 });

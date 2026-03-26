@@ -1,9 +1,13 @@
 import { App, Modal, Notice, Plugin, SuggestModal, TAbstractFile, TFile, debounce } from 'obsidian';
-import { ListResult, listAll } from 'firebase/storage';
+import { listAll } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
-import { FlintDataTransfer } from 'datatools';
-import { vaultRef, auth, setupFirebase, setUserVaultRef, withTimeout } from 'firebase-tools';
-import { FlintPluginSettings, FlintSettingsTab, DEFAULT_SETTINGS } from 'flint-settings';
+import * as E from 'fp-ts/Either';
+import * as TE from 'fp-ts/TaskEither';
+import * as T from 'fp-ts/Task';
+import { FlintDataTransfer, SyncSummary } from 'datatools';
+import { setupFirebase, setUserVaultRef, getFirebaseAuth, requireFirebaseState, withTimeout } from 'firebase-tools';
+import { FlintPluginSettings, FlintSettingsTab, DEFAULT_SETTINGS, parseSettings } from 'flint-settings';
+import { FlintError, mkSettings, displayError, isUnauthenticatedError } from 'errors';
 import { initAutomerge } from 'crdt';
 
 export let currentVaultName: string = 'vaults';
@@ -21,7 +25,7 @@ export default class FlintPlugin extends Plugin {
 		// those events are usually caused by Flint writing remote files locally,
 		// and queuing a follow-up sync would create an infinite loop.
 		if (this.isSyncing) return;
-		void this.runSync();
+		void this.runSync()();
 	}, 5000, true);
 
 	private isSyncing = false;
@@ -44,36 +48,55 @@ export default class FlintPlugin extends Plugin {
 		this.setSyncing(false);
 	}
 
-	async runSync(): Promise<void> {
-		if (this.isSyncing) return;
+	runSync(): TE.TaskEither<FlintError, SyncSummary> {
+		if (this.isSyncing) return TE.left(mkSettings('lock', 'Sync already in progress'));
 		this.isSyncing = true;
 		this.setSyncing(true);
-		try {
-			await this.dataTools.syncAll(this.app.vault, this.settings);
-		} catch (err) {
-			new Notice(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
-			void this.logError('Sync', err);
-		} finally {
+		return async () => {
+			const result = await this.dataTools.syncAll(this.app.vault, this.settings)();
 			this.releaseSyncLock();
-		}
+			if (E.isLeft(result)) {
+				if (result.left._tag === 'UserCancelledError') {
+					new Notice('Sync cancelled.');
+				} else if (isUnauthenticatedError(result.left)) {
+					// Expected when not signed in — suppress silently
+				} else {
+					new Notice(`Sync failed: ${displayError(result.left)}`);
+					await this.logError('Sync', result.left)();
+				}
+			} else {
+				const { synced, skipped, errors } = result.right;
+				new Notice(
+					errors.length > 0
+						? `Sync done — ${synced} synced, ${skipped} skipped, ${errors.length} errors`
+						: `Sync done — ${synced} synced, ${skipped} unchanged`
+				);
+			}
+			return result;
+		};
 	}
 
-	async logError(context: string, err: unknown): Promise<void> {
-		const ts = new Date().toLocaleString();
-		const msg = err instanceof Error ? err.message : String(err);
-		const line = `- ${ts} | ${context} | ${msg}\n`;
-		const logPath = 'flint-logs.md';
-		try {
-			const adapter = this.app.vault.adapter;
-			if (await adapter.exists(logPath)) {
-				const existing = await adapter.read(logPath);
-				await adapter.write(logPath, existing + line);
-			} else {
-				await adapter.write(logPath, `# Flint Logs\n\n${line}`);
+	logError(context: string, err: FlintError | unknown): T.Task<void> {
+		return async () => {
+			const ts = new Date().toLocaleString();
+			const msg = err !== null && typeof err === 'object' && '_tag' in err
+				? displayError(err as FlintError)
+				: (err instanceof Error ? err.message : String(err));
+			const line = `- ${ts} | ${context} | ${msg}\n`;
+			const logPath = 'flint-logs.md';
+			try {
+				const adapter = this.app.vault.adapter;
+				if (await adapter.exists(logPath)) {
+					const existing = await adapter.read(logPath);
+					await adapter.write(logPath, existing + line);
+				} else {
+					await adapter.write(logPath, `# Flint Logs\n\n${line}`);
+				}
+			} catch {
+				console.error('[Flint] Failed to write log:', line);
+				new Notice('Flint: could not write to flint-logs.md — check disk/permissions');
 			}
-		} catch {
-			console.error('[Flint] Failed to write log:', line);
-		}
+		};
 	}
 
 	private scheduledSyncHandle: number | null = null;
@@ -86,9 +109,77 @@ export default class FlintPlugin extends Plugin {
 		if (this.settings.scheduledSyncEnabled && this.settings.userEmail) {
 			const ms = this.settings.scheduledSyncIntervalMinutes * 60 * 1000;
 			this.scheduledSyncHandle = window.setInterval(() => {
-				void this.runSync();
+				void this.runSync()();
 			}, ms);
 		}
+	}
+
+	setupFirebaseAndAuth(): void {
+		if (!this.settings.firebaseApiKey) return;
+
+		this.unsubscribeAuth?.();
+		this.unsubscribeAuth = null;
+
+		const setupResult = setupFirebase({
+			apiKey: this.settings.firebaseApiKey,
+			authDomain: this.settings.firebaseAuthDomain,
+			storageBucket: this.settings.firebaseStorageBucket,
+			projectId: this.settings.firebaseProjectId,
+			messagingSenderId: this.settings.firebaseMessagingSenderId,
+			appId: this.settings.firebaseAppId,
+		});
+		if (E.isLeft(setupResult)) {
+			new Notice(`Firebase config error: ${displayError(setupResult.left)}`);
+			void this.logError('Firebase setup', setupResult.left)();
+			return;
+		}
+
+		const authResult = getFirebaseAuth();
+		if (E.isLeft(authResult)) {
+			new Notice(`Firebase auth error: ${displayError(authResult.left)}`);
+			void this.logError('Firebase auth init', authResult.left)();
+			return;
+		}
+
+		this.unsubscribeAuth = onAuthStateChanged(authResult.right, (user) => {
+			// onAuthStateChanged is a Firebase API — callback must be void, not TaskEither.
+			// We execute a T.Task<void> here so errors are always handled.
+			void this.handleAuthStateChange(user)();
+		});
+	}
+
+	private handleAuthStateChange(user: { uid: string; email: string | null } | null): T.Task<void> {
+		return async () => {
+			if (user) {
+				const isNewLogin = user.uid !== this.lastSyncUserId;
+				this.lastSyncUserId = user.uid;
+				this.settings.userEmail = user.email ?? '';
+
+				const setRefResult = setUserVaultRef(user.uid);
+				if (E.isLeft(setRefResult)) {
+					new Notice(`Flint: ${displayError(setRefResult.left)}`);
+					void this.logError('Set vault ref', setRefResult.left)();
+					return;
+				}
+
+				if (isNewLogin) {
+					if (!this.settings.firstSyncDone) {
+						new FirstSyncModal(this.app, this).open();
+					} else if (this.settings.syncOnStartup) {
+						const r = await this.runSync()();
+						if (E.isLeft(r) && r.left._tag !== 'UserCancelledError') {
+							void this.logError('Startup sync', r.left)();
+						}
+					}
+					this.setupScheduledSync();
+				}
+			} else {
+				this.lastSyncUserId = null;
+				this.settings.userEmail = '';
+				this.setupScheduledSync(); // clears the interval on sign-out
+			}
+			await this.saveSettings();
+		};
 	}
 
 	async onload() {
@@ -111,7 +202,7 @@ export default class FlintPlugin extends Plugin {
 				new Notice('Please sign in first (Flint settings)');
 				return;
 			}
-			void this.runSync();
+			void this.runSync()();
 		});
 		this.syncRibbon.addClass('flint-sync-ribbon-class');
 
@@ -122,42 +213,7 @@ export default class FlintPlugin extends Plugin {
 			this.statusBar.setText('Flint remote not set');
 		}
 
-		if (this.settings.firebaseApiKey) {
-			setupFirebase({
-				apiKey: this.settings.firebaseApiKey,
-				authDomain: this.settings.firebaseAuthDomain,
-				storageBucket: this.settings.firebaseStorageBucket,
-				projectId: this.settings.firebaseProjectId,
-				messagingSenderId: this.settings.firebaseMessagingSenderId,
-				appId: this.settings.firebaseAppId,
-			});
-			this.unsubscribeAuth = onAuthStateChanged(auth!, (user) => {
-				void (async () => {
-					if (user) {
-						// Firebase can fire this callback multiple times for the same
-						// sign-in (token resolution, refresh, etc). Only trigger a
-						// startup sync and reschedule when the user actually changes.
-						const isNewLogin = user.uid !== this.lastSyncUserId;
-						this.lastSyncUserId = user.uid;
-						this.settings.userEmail = user.email ?? '';
-						setUserVaultRef(user.uid);
-						if (isNewLogin) {
-							if (!this.settings.firstSyncDone) {
-								new FirstSyncModal(this.app, this).open();
-							} else if (this.settings.syncOnStartup) {
-								void this.runSync();
-							}
-							this.setupScheduledSync();
-						}
-					} else {
-						this.lastSyncUserId = null;
-						this.settings.userEmail = '';
-						this.setupScheduledSync(); // clears the interval on sign-out
-					}
-					await this.saveSettings();
-				})();
-			});
-		}
+		this.setupFirebaseAndAuth();
 
 		// Sync on local file changes (debounced — all events share the same timer)
 		this.registerEvent(
@@ -195,22 +251,21 @@ export default class FlintPlugin extends Plugin {
 			checkCallback: (checking: boolean) => {
 				if (!this.settings.userEmail) return false;
 				if (!checking) {
+					if (this.isSyncing) {
+						new Notice('A sync is already in progress. Please wait.');
+						return;
+					}
+					this.isSyncing = true;
+					this.setSyncing(true);
+					new Notice('Force push: clearing remote and re-uploading everything…');
 					void (async () => {
-						if (this.isSyncing) {
-							new Notice('A sync is already in progress. Please wait.');
-							return;
-						}
-						this.isSyncing = true;
-						this.setSyncing(true);
-						new Notice('Force push: clearing remote and re-uploading everything…');
-						try {
-							await this.dataTools.forcePush(this.app.vault, this.settings);
+						const result = await this.dataTools.forcePush(this.app.vault, this.settings)();
+						this.releaseSyncLock();
+						if (E.isLeft(result)) {
+							new Notice(`Force push failed: ${displayError(result.left)}`);
+							void this.logError('Force push', result.left)();
+						} else {
 							new Notice('Force push complete');
-						} catch (err) {
-							new Notice(`Force push failed: ${err instanceof Error ? err.message : String(err)}`);
-							void this.logError('Force push', err);
-						} finally {
-							this.releaseSyncLock();
 						}
 					})();
 				}
@@ -224,22 +279,21 @@ export default class FlintPlugin extends Plugin {
 			checkCallback: (checking: boolean) => {
 				if (!this.settings.userEmail) return false;
 				if (!checking) {
+					if (this.isSyncing) {
+						new Notice('A sync is already in progress. Please wait.');
+						return;
+					}
+					this.isSyncing = true;
+					this.setSyncing(true);
+					new Notice('Force pull: deleting local files and downloading from remote…');
 					void (async () => {
-						if (this.isSyncing) {
-							new Notice('A sync is already in progress. Please wait.');
-							return;
-						}
-						this.isSyncing = true;
-						this.setSyncing(true);
-						new Notice('Force pull: deleting local files and downloading from remote…');
-						try {
-							await this.dataTools.forcePull(this.app.vault, this.settings);
+						const result = await this.dataTools.forcePull(this.app.vault, this.settings)();
+						this.releaseSyncLock();
+						if (E.isLeft(result)) {
+							new Notice(`Force pull failed: ${displayError(result.left)}`);
+							void this.logError('Force pull', result.left)();
+						} else {
 							new Notice('Force pull complete');
-						} catch (err) {
-							new Notice(`Force pull failed: ${err instanceof Error ? err.message : String(err)}`);
-							void this.logError('Force pull', err);
-						} finally {
-							this.releaseSyncLock();
 						}
 					})();
 				}
@@ -268,7 +322,15 @@ export default class FlintPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()) as FlintPluginSettings;
+		const raw = await this.loadData();
+		const result = parseSettings(raw);
+		if (E.isRight(result)) {
+			this.settings = result.right;
+		} else {
+			console.warn('[Flint] Settings parse error, using defaults:', result.left.message);
+			void this.logError('Load settings', result.left)();
+			this.settings = DEFAULT_SETTINGS;
+		}
 	}
 
 	async saveSettings() {
@@ -276,25 +338,30 @@ export default class FlintPlugin extends Plugin {
 	}
 }
 
+// ── Firebase vault list ───────────────────────────────────────────────────────
+
 export interface FirebaseVault {
 	title: string;
 	ref?: string;
 }
 
 async function fetchFirebaseVaults(): Promise<FirebaseVault[]> {
-	if (!vaultRef) return [];
+	const stateResult = requireFirebaseState();
+	if (E.isLeft(stateResult)) return [];
 
-	const vaultList: ListResult = await withTimeout(listAll(vaultRef), 10_000, 'Fetching vault list');
+	const vaultList = await withTimeout(listAll(stateResult.right.userVaultRef), 10_000, 'Fetching vault list');
 	const ALL_FIREBASE_VAULTS: FirebaseVault[] = [];
 
 	for (let i = 0; i < vaultList.prefixes.length; i++) {
 		const vaultName = vaultList.prefixes[i].fullPath.split('/').pop();
 		if (vaultName) {
-			ALL_FIREBASE_VAULTS[i] = { title: vaultName, ref: vaultRef.fullPath };
+			ALL_FIREBASE_VAULTS[i] = { title: vaultName, ref: stateResult.right.userVaultRef.fullPath };
 		}
 	}
 	return ALL_FIREBASE_VAULTS;
 }
+
+// ── First-sync modal ──────────────────────────────────────────────────────────
 
 export class FirstSyncModal extends Modal {
 	plugin: FlintPlugin;
@@ -309,7 +376,7 @@ export class FirstSyncModal extends Modal {
 		contentEl.createEl('h2', { text: 'Welcome to Flint' });
 		contentEl.createEl('p', { text: 'This looks like the first time Flint is running on this device. How would you like to start?' });
 
-		const makeButton = (label: string, desc: string, action: () => Promise<void>) => {
+		const makeButton = (label: string, desc: string, action: () => TE.TaskEither<FlintError, SyncSummary>) => {
 			const wrap = contentEl.createDiv({ cls: 'flint-first-sync-option' });
 			wrap.createEl('strong', { text: label });
 			wrap.createEl('p', { text: desc, cls: 'setting-item-description' });
@@ -320,13 +387,13 @@ export class FirstSyncModal extends Modal {
 					el.style.opacity = '0.5';
 				});
 				this.close();
-				try {
-					await action();
+				const result = await action()();
+				if (E.isLeft(result)) {
+					new Notice(`Sync failed: ${displayError(result.left)}`);
+					void this.plugin.logError('First sync', result.left)();
+				} else {
 					this.plugin.settings.firstSyncDone = true;
 					await this.plugin.saveSettings();
-				} catch (err) {
-					new Notice(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
-					void this.plugin.logError('First sync', err);
 				}
 			})(); });
 		};
@@ -354,6 +421,8 @@ export class FirstSyncModal extends Modal {
 		this.contentEl.empty();
 	}
 }
+
+// ── Cloud vault select modal ──────────────────────────────────────────────────
 
 export class CloudVaultSelectModal extends SuggestModal<FirebaseVault> {
 	HTMLStatusbar: HTMLElement;

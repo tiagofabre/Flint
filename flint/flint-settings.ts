@@ -1,21 +1,47 @@
 import { App, ButtonComponent, Modal, PluginSettingTab, Setting, setIcon } from 'obsidian';
+import { z } from 'zod';
+import * as E from 'fp-ts/Either';
+import * as TE from 'fp-ts/TaskEither';
+import { pipe } from 'fp-ts/function';
 import FlintPlugin from 'main';
-
-function friendlyAuthError(e: unknown): string {
-	if (e instanceof Error && e.message.toLowerCase().includes('timed out')) return e.message;
-	const code: string = (e as { code?: string })?.code ?? '';
-	if (code.includes('invalid-email')) return 'Invalid email address.';
-	if (code.includes('user-not-found') || code.includes('wrong-password') || code.includes('invalid-credential')) return 'Invalid email or password.';
-	if (code.includes('email-already-in-use')) return 'An account with this email already exists.';
-	if (code.includes('weak-password')) return 'Password is too weak (minimum 6 characters).';
-	if (code.includes('too-many-requests')) return 'Too many attempts. Please try again later.';
-	if (code.includes('network-request-failed')) return 'Network error. Check your connection.';
-	if (code.includes('configuration-not-found')) return 'Email/password sign-in is not enabled in Firebase.';
-	return 'Authentication failed.';
-}
-import { vaultRef, auth, setupFirebase, FirebaseConfig, withTimeout } from 'firebase-tools';
+import { requireFirebaseState, getFirebaseAuth, withTimeout } from 'firebase-tools';
 import { ListResult, listAll } from 'firebase/storage';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { FlintError, mkSettings, mkStorage, displayError } from 'errors';
+
+// ── Settings schema ───────────────────────────────────────────────────────────
+
+export const FlintPluginSettingsSchema = z.object({
+	remoteConnectedVault:         z.string().default('default'),
+	userEmail:                    z.string().default(''),
+	firebaseApiKey:               z.string().default(''),
+	firebaseAuthDomain:           z.string().default(''),
+	firebaseStorageBucket:        z.string().default(''),
+	firebaseProjectId:            z.string().default(''),
+	firebaseMessagingSenderId:    z.string().default(''),
+	firebaseAppId:                z.string().default(''),
+	deviceId:                     z.string().default(''),
+	syncOnStartup:                z.boolean().default(true),
+	syncOnFileChange:             z.boolean().default(true),
+	scheduledSyncEnabled:         z.boolean().default(false),
+	scheduledSyncIntervalMinutes: z.number().int().min(1).default(5),
+	firstSyncDone:                z.boolean().default(false),
+});
+
+export type FlintPluginSettings = z.infer<typeof FlintPluginSettingsSchema>;
+export const DEFAULT_SETTINGS: FlintPluginSettings = FlintPluginSettingsSchema.parse({});
+
+export function parseSettings(raw: unknown): E.Either<SettingsError, FlintPluginSettings> {
+	const result = FlintPluginSettingsSchema.partial().merge(FlintPluginSettingsSchema).safeParse(raw ?? {});
+	return result.success
+		? E.right(result.data)
+		: E.left(mkSettings(undefined, result.error.issues.map(i => i.message).join('; ')));
+}
+
+// Re-export for backwards compat
+export type SettingsError = { readonly _tag: 'SettingsError'; readonly field?: string; readonly message: string };
+
+// ── File sync state ───────────────────────────────────────────────────────────
 
 export interface FileSyncState {
 	flintId: string;
@@ -25,43 +51,7 @@ export interface FileSyncState {
 
 export type SyncState = Record<string, FileSyncState>;
 
-export interface FlintPluginSettings {
-	remoteConnectedVault: string;
-	userEmail: string;
-	firebaseApiKey: string;
-	firebaseAuthDomain: string;
-	firebaseStorageBucket: string;
-	firebaseProjectId: string;
-	firebaseMessagingSenderId: string;
-	firebaseAppId: string;
-	deviceId: string;
-	syncOnStartup: boolean;
-	syncOnFileChange: boolean;
-	scheduledSyncEnabled: boolean;
-	scheduledSyncIntervalMinutes: number;
-	firstSyncDone: boolean;
-}
-
-export const DEFAULT_SETTINGS: FlintPluginSettings = {
-	remoteConnectedVault: 'default',
-	userEmail: '',
-	firebaseApiKey: '',
-	firebaseAuthDomain: '',
-	firebaseStorageBucket: '',
-	firebaseProjectId: '',
-	firebaseMessagingSenderId: '',
-	firebaseAppId: '',
-	deviceId: '',
-	syncOnStartup: true,
-	syncOnFileChange: true,
-	scheduledSyncEnabled: false,
-	scheduledSyncIntervalMinutes: 5,
-	firstSyncDone: false,
-}
-
-type TabId = 'general' | 'vaults' | 'sync';
-
-// ── Button loading helper ───────────────────────────────────────────────────
+// ── Button loading helper ─────────────────────────────────────────────────────
 
 function setButtonLoading(btn: ButtonComponent, loading: boolean, label: string): void {
 	btn.setDisabled(loading);
@@ -76,39 +66,37 @@ function setButtonLoading(btn: ButtonComponent, loading: boolean, label: string)
 	}
 }
 
-// ── Shared helpers ─────────────────────────────────────────────────────────
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
-async function fetchVaultNames(): Promise<string[]> {
-	if (!vaultRef) return [];
-	const vaultList: ListResult = await withTimeout(listAll(vaultRef), 10_000, 'Fetching vault list');
-	return vaultList.prefixes
-		.map(r => r.fullPath.split('/').pop())
-		.filter((n): n is string => !!n);
+function fetchVaultNames(): TE.TaskEither<FlintError, string[]> {
+	return pipe(
+		TE.fromEither(requireFirebaseState()),
+		TE.chain(state => TE.tryCatch(
+			() => withTimeout(listAll(state.userVaultRef), 10_000, 'Fetching vault list'),
+			e => mkStorage('list', 'vaults', e)
+		)),
+		TE.map((result: ListResult) =>
+			result.prefixes
+				.map(r => r.fullPath.split('/').pop())
+				.filter((n): n is string => !!n)
+		),
+	);
 }
 
-function buildFirebaseConfig(s: FlintPluginSettings): FirebaseConfig {
-	return {
-		apiKey: s.firebaseApiKey,
-		authDomain: s.firebaseAuthDomain,
-		storageBucket: s.firebaseStorageBucket,
-		projectId: s.firebaseProjectId,
-		messagingSenderId: s.firebaseMessagingSenderId,
-		appId: s.firebaseAppId,
-	};
-}
-
-function isFirebaseConfigured(s: FlintPluginSettings): boolean {
+export function isFirebaseConfigured(s: FlintPluginSettings): boolean {
 	return !!(s.firebaseApiKey && s.firebaseAuthDomain && s.firebaseStorageBucket && s.firebaseProjectId);
 }
 
-// ── Confirmation modal ─────────────────────────────────────────────────────
+// ── Confirmation modal ────────────────────────────────────────────────────────
 
 class ConfirmModal extends Modal {
 	private message: string;
 	private onConfirm: () => Promise<void>;
+	private plugin: FlintPlugin;
 
-	constructor(app: App, message: string, onConfirm: () => Promise<void>) {
+	constructor(app: App, plugin: FlintPlugin, message: string, onConfirm: () => Promise<void>) {
 		super(app);
+		this.plugin = plugin;
 		this.message = message;
 		this.onConfirm = onConfirm;
 	}
@@ -142,6 +130,7 @@ class ConfirmModal extends Modal {
 			contentEl.createEl('p', { text: 'Vault deleted.' });
 			setTimeout(() => this.close(), 1200);
 		} catch (e: unknown) {
+			void this.plugin.logError('Delete vault', e)();
 			contentEl.empty();
 			contentEl.createEl('p', { text: `Error: ${e instanceof Error ? e.message : 'Delete failed.'}`, cls: 'mod-warning' });
 			new Setting(contentEl)
@@ -156,7 +145,9 @@ class ConfirmModal extends Modal {
 	}
 }
 
-// ── Settings tab ───────────────────────────────────────────────────────────
+// ── Settings tab ──────────────────────────────────────────────────────────────
+
+type TabId = 'general' | 'vaults' | 'sync';
 
 export class FlintSettingsTab extends PluginSettingTab {
 	plugin: FlintPlugin;
@@ -170,25 +161,37 @@ export class FlintSettingsTab extends PluginSettingTab {
 	// Fetch all async data upfront, then clear+render synchronously to avoid
 	// race conditions when display() is called multiple times in quick succession.
 	display(): void {
-		void this._display();
+		void pipe(
+			this._display(),
+			TE.mapLeft(err => {
+				this.containerEl.empty();
+				this.containerEl.createEl('p', {
+					text: `Settings error: ${displayError(err)}`,
+					cls: 'mod-warning',
+				});
+			}),
+		)();
 	}
 
-	private async _display(): Promise<void> {
+	private _display(): TE.TaskEither<FlintError, void> {
 		const isConfigured = isFirebaseConfigured(this.plugin.settings);
 		const isSignedIn = !!this.plugin.settings.userEmail;
-		const vaultNames = (isConfigured && isSignedIn) ? await fetchVaultNames() : [];
-
-		const { containerEl } = this;
-		containerEl.empty();
-
-		this.renderTabBar(containerEl);
-
-		if (this.activeTab === 'general') this.renderGeneral(containerEl, isConfigured, isSignedIn, vaultNames);
-		if (this.activeTab === 'vaults') this.renderVaults(containerEl, isSignedIn, vaultNames);
-		if (this.activeTab === 'sync')    this.renderSync(containerEl, isSignedIn);
+		return pipe(
+			(isConfigured && isSignedIn)
+				? pipe(fetchVaultNames(), TE.orElse(() => TE.right([] as string[])))
+				: TE.right([] as string[]),
+			TE.map(vaultNames => {
+				const { containerEl } = this;
+				containerEl.empty();
+				this.renderTabBar(containerEl);
+				if (this.activeTab === 'general') this.renderGeneral(containerEl, isConfigured, isSignedIn, vaultNames);
+				if (this.activeTab === 'vaults') this.renderVaults(containerEl, isSignedIn, vaultNames);
+				if (this.activeTab === 'sync')   this.renderSync(containerEl, isSignedIn);
+			}),
+		);
 	}
 
-	// ── Tab bar ──────────────────────────────────────────────────────────────
+	// ── Tab bar ───────────────────────────────────────────────────────────────
 
 	private renderTabBar(containerEl: HTMLElement) {
 		const tabs: { id: TabId; label: string }[] = [
@@ -206,7 +209,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 		}
 	}
 
-	// ── General tab ──────────────────────────────────────────────────────────
+	// ── General tab ───────────────────────────────────────────────────────────
 
 	private renderGeneral(containerEl: HTMLElement, isConfigured: boolean, isSignedIn: boolean, vaultNames: string[]) {
 		// Step 1: Firebase config
@@ -241,19 +244,22 @@ export class FlintSettingsTab extends PluginSettingTab {
 				.addButton(btn => btn
 					.setButtonText('Save configuration')
 					.setCta()
-					.onClick(() => { void (async () => {
+					.onClick(() => {
 						setButtonLoading(btn, true, 'Save configuration');
-						try {
-							await this.plugin.saveSettings();
-							if (isFirebaseConfigured(this.plugin.settings)) {
-								setupFirebase(buildFirebaseConfig(this.plugin.settings));
-							}
-							this.display();
-						} catch (e: unknown) {
-							void this.plugin.logError('Save configuration', e);
-							setButtonLoading(btn, false, 'Save configuration');
-						}
-					})(); }));
+						void pipe(
+							TE.tryCatch(async () => {
+								await this.plugin.saveSettings();
+								if (isFirebaseConfigured(this.plugin.settings)) {
+									this.plugin.setupFirebaseAndAuth();
+								}
+								this.display();
+							}, e => mkSettings(undefined, String(e))),
+							TE.mapLeft(err => {
+								void this.plugin.logError('Save configuration', err)();
+								setButtonLoading(btn, false, 'Save configuration');
+							}),
+						)();
+					}));
 			return;
 		}
 
@@ -264,12 +270,17 @@ export class FlintSettingsTab extends PluginSettingTab {
 				.setDesc(`Project: ${this.plugin.settings.firebaseProjectId}`)
 				.addButton(btn => btn
 					.setButtonText('Change')
-					.onClick(() => { void (async () => {
+					.onClick(() => {
 						setButtonLoading(btn, true, 'Change');
-						this.plugin.settings.firebaseApiKey = '';
-						await this.plugin.saveSettings();
-						this.display();
-					})(); }));
+						void pipe(
+							TE.tryCatch(async () => {
+								this.plugin.settings.firebaseApiKey = '';
+								await this.plugin.saveSettings();
+								this.display();
+							}, e => mkSettings(undefined, String(e))),
+							TE.mapLeft(() => setButtonLoading(btn, false, 'Change')),
+						)();
+					}));
 
 			new Setting(containerEl).setName('Firebase account').setHeading();
 
@@ -296,38 +307,50 @@ export class FlintSettingsTab extends PluginSettingTab {
 				.addButton(btn => btn
 					.setButtonText('Sign in')
 					.setCta()
-					.onClick(() => { void (async () => {
-						if (!auth) return;
+					.onClick(() => {
 						errorEl.setText('');
 						setButtonLoading(btn, true, 'Sign in');
-						try {
-							const result = await withTimeout(signInWithEmailAndPassword(auth, emailInput, passwordInput), 10_000, 'Sign in');
-							this.plugin.settings.userEmail = result.user.email ?? '';
-							await this.plugin.saveSettings();
-							this.display();
-						} catch (e: unknown) {
-							errorEl.setText(friendlyAuthError(e));
-							void this.plugin.logError('Sign in', e);
-							setButtonLoading(btn, false, 'Sign in');
-						}
-					})(); }))
+						void pipe(
+							TE.fromEither(getFirebaseAuth()),
+							TE.chain(a => TE.tryCatch(
+								() => withTimeout(signInWithEmailAndPassword(a, emailInput, passwordInput), 10_000, 'Sign in'),
+								(e): FlintError => ({ _tag: 'FirebaseAuthError', code: (e as { code?: string })?.code ?? '', message: e instanceof Error ? e.message : String(e) }),
+							)),
+							TE.chain(result => TE.tryCatch(async () => {
+								this.plugin.settings.userEmail = result.user.email ?? '';
+								await this.plugin.saveSettings();
+								this.display();
+							}, e => mkSettings(undefined, String(e)))),
+							TE.mapLeft(err => {
+								errorEl.setText(displayError(err));
+								void this.plugin.logError('Sign in', err)();
+								setButtonLoading(btn, false, 'Sign in');
+							}),
+						)();
+					}))
 				.addButton(btn => btn
 					.setButtonText('Create account')
-					.onClick(() => { void (async () => {
-						if (!auth) return;
+					.onClick(() => {
 						errorEl.setText('');
 						setButtonLoading(btn, true, 'Create account');
-						try {
-							const result = await withTimeout(createUserWithEmailAndPassword(auth, emailInput, passwordInput), 10_000, 'Create account');
-							this.plugin.settings.userEmail = result.user.email ?? '';
-							await this.plugin.saveSettings();
-							this.display();
-						} catch (e: unknown) {
-							errorEl.setText(friendlyAuthError(e));
-							void this.plugin.logError('Create account', e);
-							setButtonLoading(btn, false, 'Create account');
-						}
-					})(); }));
+						void pipe(
+							TE.fromEither(getFirebaseAuth()),
+							TE.chain(a => TE.tryCatch(
+								() => withTimeout(createUserWithEmailAndPassword(a, emailInput, passwordInput), 10_000, 'Create account'),
+								(e): FlintError => ({ _tag: 'FirebaseAuthError', code: (e as { code?: string })?.code ?? '', message: e instanceof Error ? e.message : String(e) }),
+							)),
+							TE.chain(result => TE.tryCatch(async () => {
+								this.plugin.settings.userEmail = result.user.email ?? '';
+								await this.plugin.saveSettings();
+								this.display();
+							}, e => mkSettings(undefined, String(e)))),
+							TE.mapLeft(err => {
+								errorEl.setText(displayError(err));
+								void this.plugin.logError('Create account', err)();
+								setButtonLoading(btn, false, 'Create account');
+							}),
+						)();
+					}));
 			return;
 		}
 
@@ -337,18 +360,25 @@ export class FlintSettingsTab extends PluginSettingTab {
 			.setDesc(this.plugin.settings.userEmail)
 			.addButton(btn => btn
 				.setButtonText('Sign out')
-				.onClick(() => { void (async () => {
+				.onClick(() => {
 					setButtonLoading(btn, true, 'Sign out');
-					try {
-						if (auth) await withTimeout(signOut(auth), 10_000, 'Sign out');
-						this.plugin.settings.userEmail = '';
-						await this.plugin.saveSettings();
-						this.display();
-					} catch (e: unknown) {
-						void this.plugin.logError('Sign out', e);
-						setButtonLoading(btn, false, 'Sign out');
-					}
-				})(); }));
+					void pipe(
+						TE.fromEither(getFirebaseAuth()),
+						TE.chain(a => TE.tryCatch(
+							() => withTimeout(signOut(a), 10_000, 'Sign out'),
+							e => mkSettings(undefined, String(e))
+						)),
+						TE.chain(() => TE.tryCatch(async () => {
+							this.plugin.settings.userEmail = '';
+							await this.plugin.saveSettings();
+							this.display();
+						}, e => mkSettings(undefined, String(e)))),
+						TE.mapLeft(err => {
+							void this.plugin.logError('Sign out', err)();
+							setButtonLoading(btn, false, 'Sign out');
+						}),
+					)();
+				}));
 
 		const noVaultSelected = this.plugin.settings.remoteConnectedVault === 'default'
 			|| !vaultNames.includes(this.plugin.settings.remoteConnectedVault);
@@ -372,7 +402,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 			.setTooltip('Stable identifier for this device, used by the CRDT sync engine');
 	}
 
-	// ── Vaults tab ───────────────────────────────────────────────────────────
+	// ── Vaults tab ────────────────────────────────────────────────────────────
 
 	private renderVaults(containerEl: HTMLElement, isSignedIn: boolean, vaultNames: string[]) {
 		if (!isSignedIn) {
@@ -395,17 +425,20 @@ export class FlintSettingsTab extends PluginSettingTab {
 				.addButton(btn => btn
 					.setButtonText('Initialize')
 					.setCta()
-					.onClick(() => { void (async () => {
+					.onClick(() => {
 						setButtonLoading(btn, true, 'Initialize');
-						try {
-							await this.plugin.setRemoteDestination(targetName);
-							await this.plugin.runSync();
-							this.display();
-						} catch (e: unknown) {
-							void this.plugin.logError('Initialize vault', e);
-							setButtonLoading(btn, false, 'Initialize');
-						}
-					})(); }));
+						void pipe(
+							TE.tryCatch(async () => {
+								await this.plugin.setRemoteDestination(targetName);
+								await this.plugin.runSync()();
+								this.display();
+							}, e => mkSettings(undefined, String(e))),
+							TE.mapLeft(err => {
+								void this.plugin.logError('Initialize vault', err)();
+								setButtonLoading(btn, false, 'Initialize');
+							}),
+						)();
+					}));
 			return;
 		}
 
@@ -431,6 +464,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 					.onClick(() => {
 						new ConfirmModal(
 							this.plugin.app,
+							this.plugin,
 							`Delete "${vaultName}" from Firebase? This cannot be undone.`,
 							async () => {
 								await this.plugin.dataTools.deleteVault(vaultName);
@@ -444,7 +478,7 @@ export class FlintSettingsTab extends PluginSettingTab {
 		}
 	}
 
-	// ── Sync tab ─────────────────────────────────────────────────────────────
+	// ── Sync tab ──────────────────────────────────────────────────────────────
 
 	private renderSync(containerEl: HTMLElement, isSignedIn: boolean) {
 		if (!isSignedIn) {
@@ -462,10 +496,11 @@ export class FlintSettingsTab extends PluginSettingTab {
 				.onClick(() => {
 					new ConfirmModal(
 						this.plugin.app,
+						this.plugin,
 						'This will overwrite the entire remote vault with your local files. Continue?',
-						async () => {
-							await this.plugin.dataTools.forcePush(this.plugin.app.vault, this.plugin.settings);
-						}
+						() => this.plugin.dataTools.forcePush(this.plugin.app.vault, this.plugin.settings)().then(r => {
+							if (E.isLeft(r)) throw new Error(displayError(r.left));
+						})
 					).open();
 				}));
 
