@@ -351,7 +351,7 @@ export class FlintDataTransfer {
 			for (const relPath of universe) {
 				const localFile = localMap.get(relPath);
 				const isRemote = remoteMdSet.has(relPath);
-				const hasRemoteAm = remoteAmSet.has(`${prefix}${relPath}.am`);
+				const hasRemoteAm = remoteAmSet.has(`${String(prefix)}${String(relPath)}.am`);
 
 				const ctx: SyncCtx = {
 					base, vault, hasRemoteAm,
@@ -360,12 +360,12 @@ export class FlintDataTransfer {
 					updatedSyncState,
 				};
 
-				const result = await this.processFile(relPath, localFile, isRemote, ctx)();
+				const result = await this.processFile(relPath, isRemote, ctx, localFile)();
 				if (E.isRight(result)) {
 					if (result.right === 'skipped') summary.skipped++; else summary.synced++;
 				} else {
 					summary.errors.push([relPath, result.left]);
-					await this.plugin.logError(`Syncing ${relPath}`, result.left)();
+					await this.plugin.logError(`Syncing ${String(relPath)}`, result.left)();
 				}
 			}
 
@@ -390,9 +390,9 @@ export class FlintDataTransfer {
 
 	private processFile(
 		relPath: string,
-		localFile: TFile | undefined,
 		isRemote: boolean,
 		ctx: SyncCtx,
+		localFile?: TFile,
 	): TE.TaskEither<FlintError, 'synced' | 'skipped'> {
 		if (localFile && !isRemote) {
 			return pipe(this.syncNewLocal(relPath, localFile, ctx), TE.map(() => 'synced' as const));

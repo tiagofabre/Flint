@@ -146,7 +146,7 @@ describe('sync dispatch table', () => {
 
 	it('local only → syncNewLocal', async () => {
 		const ctx = makeCtx();
-		const result = await (dt as any).processFile('note.md', makeFakeFile(), false, ctx)();
+		const result = await (dt as any).processFile('note.md', false, ctx, makeFakeFile())();
 
 		expect(E.isRight(result)).toBe(true);
 		if (E.isRight(result)) expect(result.right).toBe('synced');
@@ -162,7 +162,7 @@ describe('sync dispatch table', () => {
 
 	it('remote only → syncNewRemote', async () => {
 		const ctx = makeCtx();
-		const result = await (dt as any).processFile('note.md', undefined, true, ctx)();
+		const result = await (dt as any).processFile('note.md', true, ctx, undefined)();
 
 		expect(E.isRight(result)).toBe(true);
 		if (E.isRight(result)) expect(result.right).toBe('synced');
@@ -182,7 +182,7 @@ describe('sync dispatch table', () => {
 			updatedManifest: { 'note.md': REMOTE_AM_HASH }, // same as state
 		});
 
-		const result = await (dt as any).processFile('note.md', makeFakeFile(), true, ctx)();
+		const result = await (dt as any).processFile('note.md', true, ctx, makeFakeFile())();
 
 		expect(E.isRight(result)).toBe(true);
 		if (E.isRight(result)) expect(result.right).toBe('skipped');
@@ -202,7 +202,7 @@ describe('sync dispatch table', () => {
 			updatedManifest: { 'note.md': REMOTE_AM_HASH }, // remote unchanged
 		});
 
-		const result = await (dt as any).processFile('note.md', makeFakeFile(), true, ctx)();
+		const result = await (dt as any).processFile('note.md', true, ctx, makeFakeFile())();
 
 		expect(E.isRight(result)).toBe(true);
 		if (E.isRight(result)) expect(result.right).toBe('synced');
@@ -223,7 +223,7 @@ describe('sync dispatch table', () => {
 			updatedManifest: { 'note.md': NEW_REMOTE_HASH }, // remote changed
 		});
 
-		const result = await (dt as any).processFile('note.md', makeFakeFile(), true, ctx)();
+		const result = await (dt as any).processFile('note.md', true, ctx, makeFakeFile())();
 
 		expect(E.isRight(result)).toBe(true);
 		if (E.isRight(result)) expect(result.right).toBe('synced');
@@ -242,7 +242,7 @@ describe('sync dispatch table', () => {
 			updatedManifest: { 'note.md': NEW_REMOTE_HASH },      // remote also changed
 		});
 
-		const result = await (dt as any).processFile('note.md', makeFakeFile(), true, ctx)();
+		const result = await (dt as any).processFile('note.md', true, ctx, makeFakeFile())();
 
 		expect(E.isRight(result)).toBe(true);
 		if (E.isRight(result)) expect(result.right).toBe('synced');
@@ -262,7 +262,7 @@ describe('sync dispatch table', () => {
 			updatedManifest: { 'note.md': REMOTE_AM_HASH },
 		});
 
-		const result = await (dt as any).processFile('note.md', makeFakeFile(), true, ctx)();
+		const result = await (dt as any).processFile('note.md', true, ctx, makeFakeFile())();
 
 		expect(E.isRight(result)).toBe(true);
 		expect(spyBothChanged).toHaveBeenCalledOnce();
@@ -274,7 +274,7 @@ describe('sync dispatch table', () => {
 		const err = { _tag: 'StorageError' as const, op: 'upload' as const, path: 'test', message: 'fail' };
 		spyNewLocal.mockReturnValue(TE.left(err));
 		const ctx = makeCtx();
-		const result = await (dt as any).processFile('note.md', makeFakeFile(), false, ctx)();
+		const result = await (dt as any).processFile('note.md', false, ctx, makeFakeFile())();
 
 		expect(E.isLeft(result)).toBe(true);
 		if (E.isLeft(result)) expect(result.left).toEqual(err);
