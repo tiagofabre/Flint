@@ -102,7 +102,7 @@ export class FlintDataTransfer {
 						'Authorization': `Bearer ${token}`,
 						'Content-Type': 'application/octet-stream',
 					},
-					body: bytes.buffer as ArrayBuffer,
+					body: bytes.slice().buffer,
 				});
 				return E.right(undefined);
 			} catch (e) {
@@ -171,7 +171,7 @@ export class FlintDataTransfer {
 	}
 
 	private async sha256Bytes(bytes: Uint8Array): Promise<string> {
-		const buf = await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>);
+		const buf = await crypto.subtle.digest('SHA-256', bytes.slice());
 		return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 	}
 
@@ -204,7 +204,7 @@ export class FlintDataTransfer {
 			const adapter = this.plugin.app.vault.adapter;
 			try {
 				if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
-				await adapter.writeBinary(path, bytes.buffer as ArrayBuffer);
+				await adapter.writeBinary(path, bytes.slice().buffer);
 				return E.right(undefined);
 			} catch (e) {
 				return E.left(mkLocalFile('write', relPath, e));
@@ -240,7 +240,7 @@ export class FlintDataTransfer {
 				      `because they are missing locally but were previously synced from this device.`,
 			});
 			modal.contentEl.createEl('p', {
-				text: 'This can happen if you set up Flint on a new device without using "take remote" on first sync.',
+				text: 'This can happen when setting up a new device without importing the remote vault on first sync.',
 				cls: 'setting-item-description',
 			});
 

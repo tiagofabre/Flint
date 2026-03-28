@@ -16,7 +16,7 @@ export default defineConfig([
 			parserOptions: { project: './tsconfig.json' },
 		},
 		rules: {
-			'obsidianmd/ui/sentence-case': ['error', { brands: ['Flint', 'Firebase', 'Obsidian'], acronyms: ['SDK', 'CRDT', 'ID'] }],
+			'obsidianmd/ui/sentence-case': ['error', { brands: ['Flint', 'Firebase', 'Obsidian'], acronyms: ['SDK', 'CRDT', 'ID'], enforceCamelCaseLower: true }],
 			'@typescript-eslint/no-unused-vars': ['error', { args: 'none' }],
 			'@typescript-eslint/ban-ts-comment': 'off',
 			'@typescript-eslint/no-empty-function': 'off',
