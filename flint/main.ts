@@ -22,7 +22,7 @@ export default class FlintPlugin extends Plugin {
 		// those events are usually caused by Flint writing remote files locally,
 		// and queuing a follow-up sync would create an infinite loop.
 		if (this.isSyncing) return;
-		void this.runSync()();
+		void this.runSync('auto')();
 	}, 5000, true);
 
 	private isSyncing = false;
@@ -45,29 +45,33 @@ export default class FlintPlugin extends Plugin {
 		this.setSyncing(false);
 	}
 
-	runSync(): TE.TaskEither<FlintError, SyncSummary> {
+	runSync(source: 'auto' | 'manual' = 'manual'): TE.TaskEither<FlintError, SyncSummary> {
 		if (this.isSyncing) return TE.left(mkSettings('lock', 'Sync already in progress'));
 		this.isSyncing = true;
 		this.setSyncing(true);
 		return async () => {
 			const result = await this.dataTools.syncAll(this.app.vault, this.settings)();
 			this.releaseSyncLock();
-			if (E.isLeft(result)) {
-				if (result.left._tag === 'UserCancelledError') {
-					new Notice('Sync cancelled.');
-				} else if (isUnauthenticatedError(result.left)) {
-					// Expected when not signed in — suppress silently
+			if (source === 'manual') {
+				if (E.isLeft(result)) {
+					if (result.left._tag === 'UserCancelledError') {
+						new Notice('Sync cancelled.');
+					} else if (isUnauthenticatedError(result.left)) {
+						// Expected when not signed in — suppress silently
+					} else {
+						new Notice(`Sync failed: ${displayError(result.left)}`);
+					}
 				} else {
-					new Notice(`Sync failed: ${displayError(result.left)}`);
-					await this.logError('Sync', result.left)();
+					const { synced, skipped, errors } = result.right;
+					new Notice(
+						errors.length > 0
+							? `Sync done — ${synced} synced, ${skipped} skipped, ${errors.length} errors`
+							: `Sync done — ${synced} synced, ${skipped} unchanged`
+					);
 				}
-			} else {
-				const { synced, skipped, errors } = result.right;
-				new Notice(
-					errors.length > 0
-						? `Sync done — ${synced} synced, ${skipped} skipped, ${errors.length} errors`
-						: `Sync done — ${synced} synced, ${skipped} unchanged`
-				);
+			}
+			if (E.isLeft(result) && result.left._tag !== 'UserCancelledError' && !isUnauthenticatedError(result.left)) {
+				await this.logError('Sync', result.left)();
 			}
 			return result;
 		};
@@ -106,7 +110,7 @@ export default class FlintPlugin extends Plugin {
 		if (this.settings.scheduledSyncEnabled && this.settings.userEmail) {
 			const ms = this.settings.scheduledSyncIntervalMinutes * 60 * 1000;
 			this.scheduledSyncHandle = window.setInterval(() => {
-				void this.runSync()();
+				void this.runSync('auto')();
 			}, ms);
 		}
 	}
@@ -163,10 +167,7 @@ export default class FlintPlugin extends Plugin {
 					if (!this.settings.firstSyncDone) {
 						new FirstSyncModal(this.app, this).open();
 					} else if (this.settings.syncOnStartup) {
-						const r = await this.runSync()();
-						if (E.isLeft(r) && r.left._tag !== 'UserCancelledError') {
-							void this.logError('Startup sync', r.left)();
-						}
+						await this.runSync('auto')();
 					}
 					this.setupScheduledSync();
 				}
